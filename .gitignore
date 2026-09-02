@@ -1,0 +1,26 @@
+﻿# ESP-IDF build output
+build/
+sdkconfig.old
+sdkconfig.ci
+sdkconfig.defaults.old
+
+# ESP-IDF managed components
+managed_components/
+
+# Editor / IDE files
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/c_cpp_properties.json
+*.swp
+*.orig
+*~
+
+# Clangd index cache
+.cache/
+.clangd/
+
+# OS files
+.DS_Store
+Thumbs.db
