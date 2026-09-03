@@ -118,7 +118,7 @@ void vTaskVL53L0X(void *pvParameters) {
         }
 
         // Sampling rate 50ms (~20 FPS) agar realtime sinkron dengan Frame Kamera
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -180,7 +180,7 @@ extern "C" void app_main()
     // udp_logger_init(&log_cfg);
 
     // TASK ML STREAM: Menggunakan Stack Size 8192 (Aman untuk TLS/SSL Handshake WSS)
-    BaseType_t res = xTaskCreatePinnedToCore(vTaskMLStream, "taskMLStream", 8192, NULL, 5, NULL, 1);
+    BaseType_t res = xTaskCreatePinnedToCore(vTaskMLStream, "taskMLStream", 8192, NULL, 5, NULL, 0);
     if (res != pdPASS) {
         ESP_LOGE(TAG_MAIN, "GAGAL MEMBUAT taskMLStream! Error code: %d (Kehabisan Heap RAM)", res);
     } else {
@@ -205,5 +205,5 @@ ESP_LOGI("HEAPP", "PSRAM total: %lu, PSRAM free: %lu",
          (unsigned long)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
          (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    xTaskCreate(vTaskVL53L0X, "taskVL53L0X", 3072, NULL, 5, NULL);
+    xTaskCreate(vTaskVL53L0X, "taskVL53L0X", 3072, NULL, 14, NULL);
 }

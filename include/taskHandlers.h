@@ -4,7 +4,7 @@
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 
-#define CAMERA_STACK_SIZE (8 * 1024)
+#define CAMERA_STACK_SIZE (10 * 1024)
 #define LCD_STACK_SIZE (4 * 1024)
 #define HTTP_STACK_SIZE (8 * 1024)
 

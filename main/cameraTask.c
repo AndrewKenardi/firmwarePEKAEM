@@ -9,8 +9,8 @@
 
 // FIX 1: Naikkan XCLK ke 20 MHz (Standar OV2640)
 #define CONFIG_XCLK_FREQ 10000000      
-#define JPEG_QUALITY 14
-#define FB_COUNT 2
+#define JPEG_QUALITY 15
+#define FB_COUNT 4
 static const char *TAG_I2C_DIAG = "CAM_I2C_DIAG";
 
 #define CAM_PWR_GPIO CAM_PIN_PWDN 

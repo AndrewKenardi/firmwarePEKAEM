@@ -1,46 +1,5 @@
 /*
  * wifiStreamTask.cpp
- * ----------------------------------------------------------------------
- * Versi ini mengganti esp_websocket_client (native ESP-IDF) dengan
- * library Arduino "WebSocketsClient_Generic" yang sudah terbukti bisa
- * connect di kode .ino sebelumnya, dijalankan sebagai komponen Arduino
- * di atas ESP-IDF ("Arduino as ESP-IDF component").
- *
- * PENTING - WAJIB DIBACA SEBELUM BUILD:
- *
- * 1) File ini HARUS di-compile sebagai C++ -> pastikan nama file di
- *    CMakeLists.txt komponen ini adalah "wifiStreamTask.cpp", bukan .c.
- *
- * 2) Tambahkan komponen Arduino & WebSocketsClient_Generic dulu:
- *      idf_component.yml -> espressif/arduino-esp32
- *      components/WebSocketsClient_Generic/  (copy manual dari library)
- *
- * 3) initArduino() harus dipanggil TEPAT SEKALI sebelum WiFi.h/
- *    WebSocketsClient_Generic dipakai. Di file ini dipanggil sekali di
- *    dalam vTaskMLStream (guarded oleh s_arduino_inited), supaya anda
- *    TIDAK perlu mengubah app_main(). Kalau app_main() anda SUDAH/AKAN
- *    memanggil initArduino() sendiri, hapus pemanggilan di bawah agar
- *    tidak double-init.
- *
- * 4) Koneksi Wi-Fi TETAP pakai jalur lama anda (connect_wifi() /
- *    esp_wifi_*, lewat vTaskWifiConnect() di bawah, tidak diubah).
- *    WiFi.h dari Arduino TIDAK dipakai untuk connect, hanya
- *    WebSocketsClient_Generic yang butuh Arduino core aktif.
- *    JANGAN panggil WiFi.begin() di project ini -- itu akan bentrok
- *    dengan inisialisasi esp_wifi yang sudah dilakukan connect_wifi().
- *
- * 5) SSL/TLS: beginSSL() dipanggil TANPA fingerprint/CA cert, sama
- *    persis seperti kode .ino yang sudah terbukti konek. Artinya
- *    koneksi wss:// tetap terenkripsi, TAPI ESP32 tidak memverifikasi
- *    identitas server (rentan man-in-the-middle). Ini sesuai permintaan
- *    ("tanpa sertifikat, mirip kode Arduino yang terbukti"). Kalau nanti
- *    mau menaikkan keamanan setara versi esp_crt_bundle_attach yang
- *    lama, tinggal tambah s_ws.setCACert(...) sebelum beginSSL().
- *
- * 6) Struktur payload biner, frame_queue, camera_capture_mutex, dan
- *    logika drop-old-frame semuanya TIDAK diubah -- persis sama dengan
- *    versi esp_websocket_client sebelumnya.
- * ----------------------------------------------------------------------
  */
 
 #include "wifiStreamTask.h"
@@ -89,7 +48,7 @@ static SemaphoreHandle_t s_distance_mutex = NULL;
 static uint16_t s_last_distance_mm = 0;
 static bool s_last_distance_valid = false;
 
-// Buffer reuse statis untuk transmisi data (mencegah fragmentasi heap RAM)
+// Buffer reuse statis untuk transmisi data
 static uint8_t *s_tx_packet_buffer = NULL;
 static size_t s_tx_packet_buffer_size = 0;
 
@@ -107,10 +66,6 @@ static inline void ml_safe_fb_return(camera_fb_t *fb) {
     }
 }
 
-// ============================================================================
-// HELPER FUNGSIONALITAS MUTEX JARAK
-// (extern "C" karena dipanggil dari file .c lain, mis. task sensor VL53L0X)
-// ============================================================================
 extern "C" void ml_stream_init(void) {
     if (s_distance_mutex == NULL) {
         s_distance_mutex = xSemaphoreCreateMutex();
@@ -140,7 +95,7 @@ static void ml_get_distance(uint16_t *distance_mm, bool *valid) {
 }
 
 // ============================================================================
-// WEBSOCKET EVENT HANDLER (gaya WebSocketsClient_Generic, sama seperti .ino)
+// WEBSOCKET EVENT HANDLER
 // ============================================================================
 static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
     switch (type) {
@@ -163,11 +118,9 @@ static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
 
 static void ml_init_websocket(void) {
     if (s_ws_started) {
-        return; // Cegah double initialization
+        return;
     }
 
-    // beginSSL TANPA fingerprint/CA -> tidak verifikasi sertifikat server,
-    // persis seperti kode .ino yang sudah terbukti connect.
     s_ws.beginSSL(WS_SERVER_HOST, WS_SERVER_PORT, WS_SERVER_PATH);
     s_ws.onEvent(webSocketEvent);
     s_ws.setReconnectInterval(3000);
@@ -180,18 +133,16 @@ static void ml_init_websocket(void) {
 // ============================================================================
 extern "C" void vTaskMLStream(void *pvParameters) {
     ESP_LOGI(TAG_WS, "=== TASK ML STREAM DIPANGGIL DAN MULAI BERJALAN ===");
+    
+    // PASTIKAN robot_id ini sudah terdaftar di database Backend
     const char *robot_id = "dummyrobot01";
     uint8_t robot_id_len = (uint8_t)strlen(robot_id);
 
-    // Memastikan mutex awal teralokasi
     ml_stream_init();
 
-    // Tunggu status koneksi Wi-Fi terhubung (dari connect_wifi() versi IDF,
-    // BUKAN dari WiFi.begin() Arduino -- lihat catatan poin 4 di atas file)
+    // Tunggu Wi-Fi terhubung
     xEventGroupWaitBits(wifiEventGroup, IS_WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
-    // Inisialisasi runtime Arduino SEKALI SAJA (guarded). Hapus blok ini
-    // kalau app_main() anda sudah memanggil initArduino() sendiri.
     if (!s_arduino_inited) {
         initArduino();
         s_arduino_inited = true;
@@ -201,76 +152,63 @@ extern "C" void vTaskMLStream(void *pvParameters) {
     ml_init_websocket();
 
     for (;;) {
-        // WAJIB dipanggil terus-menerus supaya WebSocketsClient_Generic
-        // memproses reconnect, ping/pong, dan event loop internalnya.
         s_ws.loop();
 
         bool ws_connected = s_ws.isConnected();
 
-        // BILA WEBSOCKET BELUM CONNECT: KOSONGKAN QUEUE AGAR BUFFER KAMERA TIDAK PENUH
+        // JIKA WEBSOCKET BELUM KONEK: DRAIN QUEUE SECARA CEPAT
         if (!ws_connected) {
             camera_fb_t *dummy_fb = NULL;
             while (xQueueReceive(frame_queue, &dummy_fb, 0) == pdTRUE) {
                 ml_safe_fb_return(dummy_fb);
             }
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(20)); // Delay pendek agar buffer kamera tidak numpuk
             continue;
-        }
-
-        // BILA WEBSOCKET TERHUBUNG: FLUSH FRAME LAMA KECUALI FRAME TERBARU
-        while (uxQueueMessagesWaiting(frame_queue) > 1) {
-            camera_fb_t *old_fb = NULL;
-            if (xQueueReceive(frame_queue, &old_fb, 0) == pdTRUE) {
-                ml_safe_fb_return(old_fb);
-            }
         }
 
         // AMBIL FRAME TERBARU DARI QUEUE
         camera_fb_t *fb = NULL;
-        if (xQueueReceive(frame_queue, &fb, pdMS_TO_TICKS(50)) == pdTRUE && fb != NULL) {
+        if (xQueueReceive(frame_queue, &fb, pdMS_TO_TICKS(20)) == pdTRUE && fb != NULL) {
 
             uint16_t distance_mm = 0;
             bool distance_valid = false;
             ml_get_distance(&distance_mm, &distance_valid);
             uint8_t is_dekat = (distance_valid && distance_mm <= EYE_DISTANCE_THRESHOLD_MM) ? 1 : 0;
 
-            // Efisiensi Alokasi Memori: Hanya realokasi jika ukuran frame bertambah
             size_t required_packet_size = 1 + robot_id_len + 1 + fb->len;
             if (s_tx_packet_buffer == NULL || s_tx_packet_buffer_size < required_packet_size) {
                 uint8_t *new_buf = (uint8_t *)realloc(s_tx_packet_buffer, required_packet_size);
                 if (new_buf == NULL) {
                     ESP_LOGE(TAG_WS, "Gagal mengalokasikan realloc paket buffer!");
                     ml_safe_fb_return(fb);
-                    vTaskDelay(pdMS_TO_TICKS(10));
+                    taskYIELD();
                     continue;
                 }
                 s_tx_packet_buffer = new_buf;
                 s_tx_packet_buffer_size = required_packet_size;
             }
 
-            // Menyusun Struktur Payload Biner (SAMA seperti versi esp_websocket_client)
+            // Susun Payload Biner
             s_tx_packet_buffer[0] = robot_id_len;
             memcpy(s_tx_packet_buffer + 1, robot_id, robot_id_len);
             s_tx_packet_buffer[1 + robot_id_len] = is_dekat;
             memcpy(s_tx_packet_buffer + 1 + robot_id_len + 1, fb->buf, fb->len);
 
-            // Transmisi biner ke Server WebSocket via WebSocketsClient_Generic
+            // Kirim frame biner
             bool sent = s_ws.sendBIN(s_tx_packet_buffer, required_packet_size);
             if (!sent) {
                 ESP_LOGE(TAG_WS, "Gagal mengirim data biner WebSocket");
             }
 
-            // Kembalikan Frame Buffer ke Driver Kamera
+            // Kembalikan Frame Buffer SEGERA ke Driver Kamera
             ml_safe_fb_return(fb);
+            fb = NULL;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        taskYIELD(); // Beri giliran CPU ke task kamera & wifi stack
     }
 }
 
-// ============================================================================
-// TASK KONEKSI WI-FI (TETAP pakai esp_wifi/IDF -- tidak diubah)
-// ============================================================================
 extern "C" void vTaskWifiConnect(void *pvParameter) {
     while (connect_wifi() != ESP_OK) {
         ESP_LOGW("WIFI", "Wi-Fi belum terhubung, mencoba ulang...");
@@ -280,6 +218,6 @@ extern "C" void vTaskWifiConnect(void *pvParameter) {
     ESP_LOGI("WIFI", "Wi-Fi Berhasil Terhubung!");
     xEventGroupSetBits(wifiEventGroup, IS_WIFI_CONNECTED_BIT);
 
-    esp_wifi_set_ps(WIFI_PS_NONE); // Matikan power saving Wi-Fi untuk latensi minimal
+    esp_wifi_set_ps(WIFI_PS_NONE);
     vTaskDelete(NULL);
 }
