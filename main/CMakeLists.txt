@@ -1,6 +1,6 @@
 set(srcs "main.cpp"
          "connect_wifi.c"
-         "wifiStreamTask.c"
+         "wifiStreamTask.cpp"
          "cameraTask.c"
          "udpLogger.c"
          "ota_task.c"
@@ -26,5 +26,8 @@ idf_component_register(SRCS ${srcs}
                              "esp_driver_uart"
                              "Adafruit_VL53L0X"
                              "arduino-esp32"
+                             "WebSockets_Generic"
+                             "esp-tls"
+                             "esp_websocket_client"
                     EMBED_FILES "ESP-C3_Firmware.bin"
                     )

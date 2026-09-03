@@ -8,8 +8,8 @@
 #include "esp_camera.h"
 
 // FIX 1: Naikkan XCLK ke 20 MHz (Standar OV2640)
-#define CONFIG_XCLK_FREQ 20000000      
-#define JPEG_QUALITY 5
+#define CONFIG_XCLK_FREQ 10000000      
+#define JPEG_QUALITY 14
 #define FB_COUNT 2
 static const char *TAG_I2C_DIAG = "CAM_I2C_DIAG";
 
@@ -58,7 +58,8 @@ esp_err_t init_camera_driver(void)
 
         .jpeg_quality = JPEG_QUALITY,
         .fb_count = FB_COUNT,
-        .grab_mode = CAMERA_GRAB_LATEST
+        .grab_mode = CAMERA_GRAB_LATEST,
+        .fb_location = CAMERA_FB_IN_PSRAM
     };
 
     // Beri jeda sebentar sebelum memanggil init

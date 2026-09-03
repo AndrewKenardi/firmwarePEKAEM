@@ -16,6 +16,7 @@ extern "C" {
 #include <nvs_flash.h>
 #include "esp_heap_caps.h"
 
+
 // FreeRTOS
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -178,8 +179,8 @@ extern "C" void app_main()
     // };
     // udp_logger_init(&log_cfg);
 
-    // TASK ML STREAM: Menggunakan Stack Size 4096 (Cukup efisien dan aman dari Stack Overflow)
-    BaseType_t res = xTaskCreatePinnedToCore(vTaskMLStream, "taskMLStream", 4096, NULL, 5, NULL, 1);
+    // TASK ML STREAM: Menggunakan Stack Size 8192 (Aman untuk TLS/SSL Handshake WSS)
+    BaseType_t res = xTaskCreatePinnedToCore(vTaskMLStream, "taskMLStream", 8192, NULL, 5, NULL, 1);
     if (res != pdPASS) {
         ESP_LOGE(TAG_MAIN, "GAGAL MEMBUAT taskMLStream! Error code: %d (Kehabisan Heap RAM)", res);
     } else {
@@ -199,6 +200,10 @@ extern "C" void app_main()
     } else {
         ESP_LOGW(TAG_MAIN, "Melewati pembuatan taskCameraRead karena Kamera tidak terdeteksi.");
     }
+
+ESP_LOGI("HEAPP", "PSRAM total: %lu, PSRAM free: %lu",
+         (unsigned long)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
+         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
     xTaskCreate(vTaskVL53L0X, "taskVL53L0X", 3072, NULL, 5, NULL);
 }
