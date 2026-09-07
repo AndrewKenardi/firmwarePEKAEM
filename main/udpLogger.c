@@ -61,10 +61,10 @@ static int udp_logger_vprintf(const char *fmt, va_list args)
     va_end(args_copy);
 
     // Tetap tampilkan ke serial console seperti biasa (kalau ada monitor)
-    int ret = len;
-    if (original_vprintf) {
-        ret = original_vprintf(fmt, args);
-    }
+    // int ret = len;
+    // if (original_vprintf) {
+    //     ret = original_vprintf(fmt, args);
+    // }
 
     if (log_queue != NULL && len > 0) {
         udp_log_msg_t item;

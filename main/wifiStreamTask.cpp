@@ -57,13 +57,7 @@ static size_t s_tx_packet_buffer_size = 0;
 // ============================================================================
 static inline void ml_safe_fb_return(camera_fb_t *fb) {
     if (fb == NULL) return;
-    if (camera_capture_mutex != NULL) {
-        xSemaphoreTake(camera_capture_mutex, portMAX_DELAY);
-    }
-    esp_camera_fb_return(fb);
-    if (camera_capture_mutex != NULL) {
-        xSemaphoreGive(camera_capture_mutex);
-    }
+    esp_camera_fb_return(fb); // Langsung kembalikan tanpa mengunci Mutex
 }
 
 extern "C" void ml_stream_init(void) {

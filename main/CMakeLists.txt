@@ -5,7 +5,6 @@ set(srcs "main.cpp"
          "udpLogger.c"
          "ota_task.c"
          "c3_programmer.c"
-         "update_manager.c"
          )
 idf_component_register(SRCS ${srcs}
                     INCLUDE_DIRS "." "../include"

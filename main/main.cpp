@@ -140,7 +140,7 @@ extern "C" void app_main()
     wifiEventGroup   = xEventGroupCreateStatic(&wifiEventGroupBuffer);
     cameraEventGroup = xEventGroupCreateStatic(&cameraEventGroupBuffer);
 
-    ml_stream_init(); // Inisialisasi s_distance_mutex
+    ml_stream_init(); 
 
     if (camera_capture_mutex == NULL) {
         camera_capture_mutex = xSemaphoreCreateMutex();
@@ -154,32 +154,50 @@ extern "C" void app_main()
     }
 
     // =========================================================================
-    // 2. INIT DRIVER HARDWARE
+    // 2. INIT DRIVER HARDWARE (Retry hingga 5x)
     // =========================================================================
-    if (init_camera_driver() != ESP_OK) {
-        ESP_LOGE(TAG_CAMERA, "Camera Init Failed!");
-        xEventGroupClearBits(cameraEventGroup, IS_CAMERA_CONNECTED_BIT);
-    } else {
+    const int max_retries = 5;
+    bool camera_initialized = false;
+
+    for (int attempt = 1; attempt <= max_retries; attempt++) {
+        ESP_LOGI(TAG_CAMERA, "Mencoba inisialisasi kamera (Percobaan %d/%d)...", attempt, max_retries);
+        
+        if (init_camera_driver() == ESP_OK) {
+            camera_initialized = true;
+            break;
+        }
+
+        ESP_LOGW(TAG_CAMERA, "Gagal inisialisasi kamera pada percobaan %d.", attempt);
+        
+        // Beri jeda 500ms antar percobaan agar hardware/power stabil
+        if (attempt < max_retries) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+    }
+
+    if (camera_initialized) {
         ESP_LOGI(TAG_CAMERA, "Camera Init Berhasil!");
         xEventGroupSetBits(cameraEventGroup, IS_CAMERA_CONNECTED_BIT);
+    } else {
+        ESP_LOGE(TAG_CAMERA, "Camera Init GAGAL setelah %d kali percobaan! Melanjutkan sistem tanpa kamera...", max_retries);
+        xEventGroupClearBits(cameraEventGroup, IS_CAMERA_CONNECTED_BIT);
     }
 
     // =========================================================================
-    // 3. WIFICONNECT & CREATION OF CONSUMER TASKS
+    // 3. WIFICONNECT & CREATION OF CONSUMER TASKS (Tetap berjalan meski cam gagal)
     // =========================================================================
     // Prioritas 20: Jalankan Task Wi-Fi terlebih dahulu
     xTaskCreate(vTaskWifiConnect, "taskWifiConnect", 3072, NULL, 20, NULL);
 
-    // Buka UDP Logger
-    // udp_logger_config_t log_cfg = {
-    //     .server_ip       = "10.45.173.156",
-    //     .server_port     = 5005,
-    //     .queue_len       = 32,
-    //     .sender_priority = 3,
-    // };
-    // udp_logger_init(&log_cfg);
+    udp_logger_config_t log_cfg = {
+        .server_ip       = "10.45.173.156",
+        .server_port     = 5005,
+        .queue_len       = 32,
+        .sender_priority = 3,
+    };
+    udp_logger_init(&log_cfg);
 
-    // TASK ML STREAM: Menggunakan Stack Size 8192 (Aman untuk TLS/SSL Handshake WSS)
+    // TASK ML STREAM
     BaseType_t res = xTaskCreatePinnedToCore(vTaskMLStream, "taskMLStream", 8192, NULL, 5, NULL, 0);
     if (res != pdPASS) {
         ESP_LOGE(TAG_MAIN, "GAGAL MEMBUAT taskMLStream! Error code: %d (Kehabisan Heap RAM)", res);
@@ -187,7 +205,14 @@ extern "C" void app_main()
         ESP_LOGI(TAG_MAIN, "BERHASIL MEMBUAT taskMLStream!");
     }
 
-    // xTaskCreate(vTaskUpdateManager, "taskUpdateManager", 4096, NULL, 5, NULL);
+    // TASK UPDATE MANAGER (Self OTA)
+    BaseType_t res_update = xTaskCreate(vTaskUpdateManager, "taskUpdateManager", 8192, NULL, 5, NULL);
+    if (res_update != pdPASS) {
+        ESP_LOGE(TAG_MAIN, "GAGAL MEMBUAT taskUpdateManager! Error: %d, Free heap: %lu",
+                 res_update, (unsigned long)esp_get_free_heap_size());
+    } else {
+        ESP_LOGI(TAG_MAIN, "BERHASIL MEMBUAT taskUpdateManager!");
+    }
 
     // =========================================================================
     // 4. TASK PERIPHERAL LAIN
@@ -201,9 +226,10 @@ extern "C" void app_main()
         ESP_LOGW(TAG_MAIN, "Melewati pembuatan taskCameraRead karena Kamera tidak terdeteksi.");
     }
 
-ESP_LOGI("HEAPP", "PSRAM total: %lu, PSRAM free: %lu",
-         (unsigned long)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
-         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI("HEAPP", "PSRAM total: %lu, PSRAM free: %lu",
+             (unsigned long)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    xTaskCreate(vTaskVL53L0X, "taskVL53L0X", 3072, NULL, 14, NULL);
+    // xTaskCreate(vTaskVL53L0X, "taskVL53L0X", 3072, NULL, 14, NULL);
+    // xTaskCreate(master_ota_task, "MasterOtaTask", 3072, NULL, 10, NULL);
 }

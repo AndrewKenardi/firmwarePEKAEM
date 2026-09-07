@@ -9,11 +9,6 @@
 
 #define SELF_OTA_URL           OTA_SERVER_BASE "/firmwarePkm.bin"
 
-#define C3_VERSION_URL         OTA_SERVER_BASE "/c3/c3_version.txt"
-#define C3_BOOTLOADER_URL      OTA_SERVER_BASE "/c3/bootloader_c3.bin"
-#define C3_PARTITION_URL       OTA_SERVER_BASE "/c3/partition-table_c3.bin"
-#define C3_APP_URL             OTA_SERVER_BASE "/c3/ESP-C3_Firmware.bin"
-
 // ============================================================================
 // UART & pin kontrol ke ESP32-C3
 // ============================================================================

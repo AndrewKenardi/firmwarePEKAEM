@@ -12,13 +12,21 @@
 #include "esp_log.h"
 #include <string.h>
 #include "ota_config.h"
+#include "connect_wifi.h"
+#include "freertos/event_groups.h"
 
+extern EventGroupHandle_t wifiEventGroup;
+
+#ifndef WIFI_CONNECTED_BIT
+#define WIFI_CONNECTED_BIT BIT0
+#endif
 
 static const char *TAG_OTA = "OTA";
 static const char *TAG = "VERSION_CHECK";
 
 void vTaskUpdateManager(void *pvParameters)
 {
+    xEventGroupWaitBits(wifiEventGroup, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
     for (;;) {
         bool any_failure = false;
