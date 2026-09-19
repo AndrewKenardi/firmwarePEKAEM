@@ -466,12 +466,29 @@ static esp_err_t vl53_sensor_init(void)
 
     VL53_CHECK(vl53_load_tuning_settings());
 
+    {
+        uint8_t gpio_hv_mux_active_high;
+
+        VL53_CHECK(vl53_write_u8(0x0A, 0x04));
+        VL53_CHECK(vl53_read_u8(0x84, &gpio_hv_mux_active_high));
+        VL53_CHECK(vl53_write_u8(
+            0x84,
+            gpio_hv_mux_active_high & ~0x10
+        ));
+        VL53_CHECK(vl53_write_u8(0x0B, 0x01));
+    }
+
+    VL53_CHECK(vl53_write_u8(0x01, 0xE8));
+
+    /* VHV calibration */
     VL53_CHECK(vl53_write_u8(0x01, 0x01));
     VL53_CHECK(vl53_single_ref_calibration(0x40));
 
+    /* Phase calibration */
     VL53_CHECK(vl53_write_u8(0x01, 0x02));
     VL53_CHECK(vl53_single_ref_calibration(0x00));
 
+    /* Kembalikan konfigurasi normal */
     VL53_CHECK(vl53_write_u8(0x01, 0xE8));
 
     return ESP_OK;
