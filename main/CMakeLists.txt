@@ -1,4 +1,5 @@
 set(srcs "main.cpp"
+         "vl53l0x_task.c"
          "connect_wifi.c"
          "wifiStreamTask.cpp"
          "cameraTask.c"
@@ -24,7 +25,6 @@ idf_component_register(SRCS ${srcs}
                              "esp_wifi" 
                              "esp_http_server" 
                              "esp_driver_uart"
-                             "Adafruit_VL53L0X"
                              "arduino-esp32"
                              "WebSockets_Generic"
                              "esp-tls"
