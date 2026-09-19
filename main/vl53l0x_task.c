@@ -289,22 +289,33 @@ static esp_err_t vl53_get_spad_info(
 )
 {
     uint8_t temp = 0;
-    int64_t deadline;
+
+    /*
+     * Tahap ini bisa lebih lama dibanding pembacaan register biasa.
+     * Jangan memakai timeout 50 ms.
+     */
+    int64_t deadline = esp_timer_get_time() + 500000;
 
     VL53_CHECK(vl53_write_u8(0x80, 0x01));
     VL53_CHECK(vl53_write_u8(0xFF, 0x01));
     VL53_CHECK(vl53_write_u8(0x00, 0x00));
 
     VL53_CHECK(vl53_write_u8(0xFF, 0x06));
-    VL53_CHECK(vl53_write_u8(0x83, 0x04));
+
+    /*
+     * Bit sebelumnya harus dipertahankan.
+     * Jangan langsung menulis 0x04 karena nilai register bisa berbeda
+     * pada tiap unit VL53L0X.
+     */
+    VL53_CHECK(vl53_read_u8(0x83, &temp));
+    VL53_CHECK(vl53_write_u8(0x83, temp | 0x04));
+
     VL53_CHECK(vl53_write_u8(0xFF, 0x07));
     VL53_CHECK(vl53_write_u8(0x81, 0x01));
 
     VL53_CHECK(vl53_write_u8(0x80, 0x01));
     VL53_CHECK(vl53_write_u8(0x94, 0x6B));
     VL53_CHECK(vl53_write_u8(0x83, 0x00));
-
-    deadline = esp_timer_get_time() + 50000;
 
     do {
         VL53_CHECK(vl53_read_u8(0x83, &temp));
@@ -318,6 +329,7 @@ static esp_err_t vl53_get_spad_info(
     } while (esp_timer_get_time() < deadline);
 
     if (temp == 0x00) {
+        ESP_LOGE(TAG, "Timeout saat membaca konfigurasi SPAD.");
         return ESP_ERR_TIMEOUT;
     }
 
@@ -329,11 +341,18 @@ static esp_err_t vl53_get_spad_info(
 
     VL53_CHECK(vl53_write_u8(0x81, 0x00));
     VL53_CHECK(vl53_write_u8(0xFF, 0x06));
-    VL53_CHECK(vl53_write_u8(0x83, 0x00));
+
+    /* Kembalikan hanya bit 0x04 tanpa merusak bit lain. */
+    VL53_CHECK(vl53_read_u8(0x83, &temp));
+    VL53_CHECK(vl53_write_u8(0x83, temp & ~0x04));
+
     VL53_CHECK(vl53_write_u8(0xFF, 0x01));
     VL53_CHECK(vl53_write_u8(0x00, 0x01));
     VL53_CHECK(vl53_write_u8(0xFF, 0x00));
     VL53_CHECK(vl53_write_u8(0x80, 0x00));
+
+    ESP_LOGI(TAG, "SPAD siap: count=%u, aperture=%u",
+             *count, *type_is_aperture);
 
     return ESP_OK;
 }
@@ -412,13 +431,21 @@ static esp_err_t vl53_sensor_init(void)
     VL53_CHECK(vl53_write_u8(0xFF, 0x00));
     VL53_CHECK(vl53_write_u8(0x80, 0x00));
 
+    /* System sequence harus aktif sebelum membaca konfigurasi SPAD. */
+    VL53_CHECK(vl53_write_u8(0x01, 0xFF));
+
+    ESP_LOGI(TAG, "Membaca konfigurasi SPAD...");
     VL53_CHECK(vl53_get_spad_info(&spad_count, &spad_type));
 
     VL53_CHECK(vl53_write_u8(0xFF, 0x01));
     VL53_CHECK(vl53_write_u8(0x4F, 0x00));
     VL53_CHECK(vl53_write_u8(0x4E, 0x2C));
     VL53_CHECK(vl53_write_u8(0xFF, 0x00));
-    VL53_CHECK(vl53_read(0xB0, ref_spad_map, 6));
+
+    /* Register referensi SPAD yang wajib diatur sebelum menulis SPAD map. */
+    VL53_CHECK(vl53_write_u8(0xB4, 0xB4));
+
+    VL53_CHECK(vl53_write_multi(0xB0, ref_spad_map, 6));
 
     int first_spad = spad_type ? 12 : 0;
     int enabled = 0;
@@ -438,8 +465,6 @@ static esp_err_t vl53_sensor_init(void)
     VL53_CHECK(vl53_write_multi(0xB0, ref_spad_map, 6));
 
     VL53_CHECK(vl53_load_tuning_settings());
-
-    VL53_CHECK(vl53_write_u8(0x01, 0xFF));
 
     VL53_CHECK(vl53_write_u8(0x01, 0x01));
     VL53_CHECK(vl53_single_ref_calibration(0x40));
