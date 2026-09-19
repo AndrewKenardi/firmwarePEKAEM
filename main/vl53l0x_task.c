@@ -211,23 +211,51 @@ static void vl53_hardware_reset(void)
     vTaskDelay(pdMS_TO_TICKS(VL53L0X_BOOT_DELAY_MS));
 }
 
+//static esp_err_t vl53_probe(void)
+//{
+    //esp_err_t err = i2c_master_probe(
+        //s_i2c_bus,
+        //VL53L0X_I2C_ADDR,
+        //VL53L0X_I2C_TIMEOUT_MS
+    //);
+//
+    //if (err == ESP_OK) {
+        //ESP_LOGI(TAG, "VL53L0X ditemukan pada alamat 0x%02X",
+                 //VL53L0X_I2C_ADDR);
+    //} else {
+        //ESP_LOGE(TAG, "VL53L0X tidak terdeteksi: %s",
+                 //esp_err_to_name(err));
+    //}
+//
+    //return err;
+//}
+
+//vl53 ini nanti dihapus klo udah dapet alamat i2c
 static esp_err_t vl53_probe(void)
 {
-    esp_err_t err = i2c_master_probe(
-        s_i2c_bus,
-        VL53L0X_I2C_ADDR,
-        VL53L0X_I2C_TIMEOUT_MS
-    );
+    int found = 0;
 
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "VL53L0X ditemukan pada alamat 0x%02X",
-                 VL53L0X_I2C_ADDR);
-    } else {
-        ESP_LOGE(TAG, "VL53L0X tidak terdeteksi: %s",
-                 esp_err_to_name(err));
+    ESP_LOGI(TAG, "Memulai I2C scan...");
+
+    for (uint8_t address = 1; address < 127; address++) {
+        esp_err_t err = i2c_master_probe(
+            s_i2c_bus,
+            address,
+            VL53L0X_I2C_TIMEOUT_MS
+        );
+
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "I2C device ditemukan di 0x%02X", address);
+            found++;
+        }
     }
 
-    return err;
+    if (found == 0) {
+        ESP_LOGE(TAG, "Tidak ada perangkat I2C terdeteksi.");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    return ESP_OK;
 }
 
 // ============================================================================
