@@ -31,7 +31,7 @@
 #include "Wire.h"
 #include "vl53l0x_api.h"
 
-#define VL53L0X_I2C_ADDR 0x29 ///< Default sensor I2C address
+#define VL53L0X_I2C_ADDR 0x15 ///< Default sensor I2C address
 
 /**************************************************************************/
 /*!

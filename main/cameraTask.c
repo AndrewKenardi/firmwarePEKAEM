@@ -8,9 +8,9 @@
 #include "esp_camera.h"
 
 // FIX 1: Naikkan XCLK ke 20 MHz (Standar OV2640)
-#define CONFIG_XCLK_FREQ 10000000     
-#define JPEG_QUALITY 30
-#define FB_COUNT 3
+#define CONFIG_XCLK_FREQ 10000000  
+#define JPEG_QUALITY 12
+#define FB_COUNT 2
 static const char *TAG_I2C_DIAG = "CAM_I2C_DIAG";
 
 #define CAM_PWR_GPIO CAM_PIN_PWDN 

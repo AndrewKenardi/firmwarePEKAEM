@@ -82,32 +82,61 @@ Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 // ----------------------------------------------------------------------------
 // Task khusus untuk membaca sensor VL53L0X
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Task khusus untuk membaca sensor VL53L0X
+// ----------------------------------------------------------------------------
 void vTaskVL53L0X(void *pvParameters) {
-    // Reset Hardware Sensor via XSHUT (Non-blocking menggunakan FreeRTOS delay)
+    // 1. Reset Hardware VL53L0X via XSHUT
     pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
-    digitalWrite(VL53L0X_XSHUT_PIN, LOW);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    digitalWrite(VL53L0X_XSHUT_PIN, HIGH);
+    digitalWrite(VL53L0X_XSHUT_PIN, LOW);   // Masuk mode Shutdown
+    vTaskDelay(pdMS_TO_TICKS(100));
+    digitalWrite(VL53L0X_XSHUT_PIN, HIGH);  // Aktifkan Sensor
+    vTaskDelay(pdMS_TO_TICKS(100));         // Tunggu bootloader sensor siap
+
+    // 2. Configure Internal Pull-Up untuk I2C Sensor
+    pinMode(I2C_SDA_PIN, INPUT_PULLUP);
+    pinMode(I2C_SCL_PIN, INPUT_PULLUP);
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    // Inisialisasi I2C Wire untuk Arduino Library
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    // 3. Inisialisasi Bus I2C Wire (SDA=15, SCL=13, Freq=100kHz)
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, 100000);
 
-    if (!lox.begin(VL53L0X_I2C_ADDR, false, &Wire)) {
-        ESP_LOGE(TAG_VL53, "Gagal menginisialisasi VL53L0X! Cek wiring SDA=%d SCL=%d XSHUT=%d",
+    // 4. I2C Scanner Debugging
+    ESP_LOGI("I2C_SCAN", "Memulai Pemindaian I2C pada SDA:%d SCL:%d...", I2C_SDA_PIN, I2C_SCL_PIN);
+    int nDevices = 0;
+    for (byte address = 1; address < 127; address++) {
+        Wire.beginTransmission(address);
+        byte error = Wire.endTransmission();
+
+        if (error == 0) {
+            ESP_LOGI("I2C_SCAN", "Perangkat I2C DITEMUKAN pada alamat 0x%02X !", address);
+            nDevices++;
+        }
+    }
+
+    if (nDevices == 0) {
+        ESP_LOGE("I2C_SCAN", "TIDAK ADA Perangkat I2C ditemukan pada SDA:%d SCL:%d!", I2C_SDA_PIN, I2C_SCL_PIN);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // 5. Inisialisasi Sensor VL53L0X pada Alamat Default (0x29)
+    if (!lox.begin(0x29, false, &Wire)) {
+        ESP_LOGE(TAG_VL53, "Gagal menginisialisasi VL53L0X! (SDA:%d SCL:%d XSHUT:%d)",
                  I2C_SDA_PIN, I2C_SCL_PIN, VL53L0X_XSHUT_PIN);
-        vTaskDelete(NULL); // Hapus task jika hardware tidak terdeteksi
+        vTaskDelete(NULL);
         return;
     }
 
     lox.startRangeContinuous();
-    ESP_LOGI(TAG_VL53, "Sensor VL53L0X berhasil dimulai!");
+    ESP_LOGI(TAG_VL53, "Sensor VL53L0X BERHASIL Diaktifkan!");
 
+    // 6. Loop Pembacaan Sensor Continuous
     for (;;) {
         if (lox.isRangeComplete()) {
             uint16_t range = lox.readRange();
             
-            // Filter nilai pembacaan valid (VL53L0X return 8190/8191 jika out of range)
+            // Filter pembacaan valid (< 8000 mm)
             bool is_valid = (range < 8000); 
             if (is_valid) {
                 ESP_LOGD(TAG_VL53, "Distance: %d mm", range);
@@ -117,11 +146,10 @@ void vTaskVL53L0X(void *pvParameters) {
             }
         }
 
-        // Sampling rate 50ms (~20 FPS) agar realtime sinkron dengan Frame Kamera
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Sampling Rate 50ms (~20 FPS)
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
-
 extern "C" void app_main()
 {
     ota_confirm_running_app();
@@ -133,6 +161,12 @@ extern "C" void app_main()
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+  
+  // Set nilai GPIO 23 ke kondisi LOW
+    // digitalWrite(23, LOW);
 
     // =========================================================================
     // 1. ALOKASI OBJECT SYNCHRONIZATION (Harus Pertama)
@@ -187,18 +221,33 @@ extern "C" void app_main()
     // 3. WIFICONNECT & CREATION OF CONSUMER TASKS (Tetap berjalan meski cam gagal)
     // =========================================================================
     // Prioritas 20: Jalankan Task Wi-Fi terlebih dahulu
-    xTaskCreate(vTaskWifiConnect, "taskWifiConnect", 3072, NULL, 20, NULL);
+xTaskCreate(vTaskWifiConnect, "taskWifiConnect", 4096, NULL, 20, NULL);
 
-    udp_logger_config_t log_cfg = {
-        .server_ip       = "10.45.173.156",
-        .server_port     = 5005,
-        .queue_len       = 32,
-        .sender_priority = 3,
-    };
-    udp_logger_init(&log_cfg);
+    // Tunggu hingga Wi-Fi benar-benar terhubung dan dapat IP sebelum jalankan UDP Logger
+    ESP_LOGI(TAG_MAIN, "Menunggu koneksi Wi-Fi...");
+    EventBits_t bits = xEventGroupWaitBits(
+        wifiEventGroup,
+        WIFI_CONNECTED_BIT,
+        pdFALSE,
+        pdTRUE,
+        pdMS_TO_TICKS(WIFI_CONNECT_TIMEOUT_MS)
+    );
+
+    if (bits & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(TAG_MAIN, "Wi-Fi Terhubung! Menginisialisasi UDP Logger...");
+        udp_logger_config_t log_cfg = {
+            .server_ip       = "10.38.223.156",
+            .server_port     = 5005,
+            .queue_len       = 32,
+            .sender_priority = 3,
+        };
+        udp_logger_init(&log_cfg);
+    } else {
+        ESP_LOGE(TAG_MAIN, "Wi-Fi Gagal Terhubung dalam %d ms! UDP Logger dilewati.", WIFI_CONNECT_TIMEOUT_MS);
+    }
 
     // TASK ML STREAM
-    BaseType_t res = xTaskCreatePinnedToCore(vTaskMLStream, "taskMLStream", 8192, NULL, 5, NULL, 0);
+    BaseType_t res = xTaskCreatePinnedToCore(vTaskMLStream, "taskMLStream", 8192, NULL, 16, NULL, 0);
     if (res != pdPASS) {
         ESP_LOGE(TAG_MAIN, "GAGAL MEMBUAT taskMLStream! Error code: %d (Kehabisan Heap RAM)", res);
     } else {
@@ -206,7 +255,7 @@ extern "C" void app_main()
     }
 
     // TASK UPDATE MANAGER (Self OTA)
-    BaseType_t res_update = xTaskCreate(vTaskUpdateManager, "taskUpdateManager", 8192, NULL, 5, NULL);
+    BaseType_t res_update = xTaskCreate(vTaskUpdateManager, "taskUpdateManager", 8192, NULL, 20, NULL);
     if (res_update != pdPASS) {
         ESP_LOGE(TAG_MAIN, "GAGAL MEMBUAT taskUpdateManager! Error: %d, Free heap: %lu",
                  res_update, (unsigned long)esp_get_free_heap_size());
@@ -229,7 +278,9 @@ extern "C" void app_main()
     ESP_LOGI("HEAPP", "PSRAM total: %lu, PSRAM free: %lu",
              (unsigned long)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    vTaskDelay(pdTICKS_TO_MS(10000));
 
-    // xTaskCreate(vTaskVL53L0X, "taskVL53L0X", 3072, NULL, 14, NULL);
-    // xTaskCreate(master_ota_task, "MasterOtaTask", 3072, NULL, 10, NULL);
+    xTaskCreate(vTaskVL53L0X, "taskVL53L0X", 3072, NULL, 14, NULL);
+    // vTaskDelay(5000);
+    xTaskCreate(master_ota_task, "MasterOtaTask", 3072, NULL, 10, NULL);
 }

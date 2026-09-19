@@ -5,6 +5,7 @@ set(srcs "main.cpp"
          "udpLogger.c"
          "ota_task.c"
          "c3_programmer.c"
+         "uartTx.c"
          )
 idf_component_register(SRCS ${srcs}
                     INCLUDE_DIRS "." "../include"
@@ -28,5 +29,5 @@ idf_component_register(SRCS ${srcs}
                              "WebSockets_Generic"
                              "esp-tls"
                              "esp_websocket_client"
-                    EMBED_FILES "ESP-C3_Firmware.bin"
+
                     )

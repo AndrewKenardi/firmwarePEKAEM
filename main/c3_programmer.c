@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -7,15 +8,14 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_crc.h"
+#include "esp_http_client.h"
 #include "fw_version.h"
+#include "c3_programmer.h"
 
 static const char *TAG = "MASTER_OTA";
 
-#define MASTER_UART_NUM       (UART_NUM_0)
-#define MASTER_TX_PIN         (GPIO_NUM_1)  
-#define MASTER_RX_PIN         (GPIO_NUM_3)  
-#define CHUNK_SIZE            (512)
-#define MAX_RETRIES           (5)
+// Konfigurasi URL HTTP Server Lokal
+#define FIRMWARE_HTTP_URL     "http://10.38.223.156:8000/ESP-C3_Firmware.bin"
 
 static const uint8_t SYNC_BYTES[6] = {0xC0, 0xFF, 0xFE, 0xAA, 0x55, 0x90};
 #define ACK_BYTE              0x06
@@ -24,11 +24,16 @@ static const uint8_t SYNC_BYTES[6] = {0xC0, 0xFF, 0xFE, 0xAA, 0x55, 0x90};
 #define FINAL_ACK_BYTE        0xA5   
 #define OTA_ERROR_BYTE        0xE7   
 
-#define LAST_CHUNK_TIMEOUT_MS (10000) // Diperbesar ke 10s untuk beri waktu Slave menulis flash & CRC
+#define LAST_CHUNK_TIMEOUT_MS (10000) 
 #define LAST_CHUNK_RETRIES    (5)    
 
-extern const uint8_t slave_start[] asm("_binary_ESP_C3_Firmware_bin_start");
-extern const uint8_t slave_end[]   asm("_binary_ESP_C3_Firmware_bin_end");
+#ifndef CHUNK_SIZE
+#define CHUNK_SIZE            (1024)
+#endif
+
+#ifndef MAX_RETRIES
+#define MAX_RETRIES           (5)
+#endif
 
 #pragma pack(push, 1)
 typedef struct {
@@ -51,7 +56,6 @@ static void master_uart_init(void)
     };
     ESP_ERROR_CHECK(uart_param_config(MASTER_UART_NUM, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(MASTER_UART_NUM, MASTER_TX_PIN, MASTER_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    // Memperbesar buffer RX Master untuk keamanan
     ESP_ERROR_CHECK(uart_driver_install(MASTER_UART_NUM, 4096, 4096, 0, NULL, 0));
 }
 
@@ -121,30 +125,70 @@ void master_ota_task(void *pvParameters)
 {
     master_uart_init();
 
-    size_t slave_size = slave_end - slave_start;
-    const uint8_t *firmware_ptr = slave_start;
+    // 1. Inisialisasi HTTP Client untuk membuka koneksi ke Server Lokal
+    esp_http_client_config_t http_cfg = {
+        .url = FIRMWARE_HTTP_URL,
+        .timeout_ms = 10000,
+        .buffer_size = 2048,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
+    if (client == NULL) {
+        ESP_LOGE(TAG, "Gagal membuat HTTP client handle!");
+        vTaskDelete(NULL);
+        return;
+    }
 
-    // Hitung CRC32 persis seperti cara Slave menghitung bertahap
-    uint32_t calculated_crc = esp_crc32_le(0, firmware_ptr, slave_size);
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Gagal terhubung ke HTTP Server: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Mengambil Content-Length dari HTTP Header sebagai ukuran file
+    int fw_size = esp_http_client_fetch_headers(client);
+    int status_code = esp_http_client_get_status_code(client);
+
+    if (status_code != 200 || fw_size <= 0) {
+        ESP_LOGE(TAG, "HTTP Request Gagal, Status Code: %d, Ukuran File: %d", status_code, fw_size);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Membaca Custom Header dari Server (jika ada, e.g. X-Firmware-CRC32 & X-Firmware-Version)
+    uint32_t calculated_crc = 0;
+    uint32_t target_fw_ver = FIRMWARE_VERSION;
+
+    char header_val[32] = {0};
+    if (esp_http_client_get_header(client, "X-Firmware-CRC32", (char**)&header_val) == ESP_OK && header_val[0] != 0) {
+        calculated_crc = (uint32_t)strtoul(header_val, NULL, 16);
+    }
+    memset(header_val, 0, sizeof(header_val));
+    if (esp_http_client_get_header(client, "X-Firmware-Version", (char**)&header_val) == ESP_OK && header_val[0] != 0) {
+        target_fw_ver = (uint32_t)strtoul(header_val, NULL, 16);
+    }
 
     ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, " Memulai Transmisi OTA Master");
-    ESP_LOGI(TAG, " Ukuran Firmware : %u byte", (unsigned int)slave_size);
-    ESP_LOGI(TAG, " Kalkulasi CRC32 : 0x%08X", (unsigned int)calculated_crc);
-    ESP_LOGI(TAG, " Versi Firmware  : 0x%08X", (unsigned int)FIRMWARE_VERSION);
+    ESP_LOGI(TAG, " Memulai Stream OTA dari Server Lokal");
+    ESP_LOGI(TAG, " Ukuran Firmware : %d byte", fw_size);
+    ESP_LOGI(TAG, " Target CRC32    : 0x%08X", (unsigned int)calculated_crc);
+    ESP_LOGI(TAG, " Versi Firmware  : 0x%08X", (unsigned int)target_fw_ver);
     ESP_LOGI(TAG, "==========================================");
 
+    // 2. Kirim Header Handshake ke Slave via UART
     ota_header_t header;
     memcpy(header.sync, SYNC_BYTES, sizeof(SYNC_BYTES));
-    header.fw_size    = (uint32_t)slave_size;
+    header.fw_size    = (uint32_t)fw_size;
     header.fw_crc32   = calculated_crc;
-    header.fw_version = FIRMWARE_VERSION;
+    header.fw_version = target_fw_ver;
 
     uint8_t rx_buf[1];
     bool synced = false;
     bool skip_update = false;
 
-    // Flush HANYA SEBELUM HANDSHAKE
     uart_flush_input(MASTER_UART_NUM);
 
     while (!synced) {
@@ -164,6 +208,8 @@ void master_ota_task(void *pvParameters)
             synced = true; 
         } else if (len > 0 && master_check_error(rx_buf[0])) {
             ESP_LOGE(TAG, "OTA dibatalkan karena error di slave saat handshake.");
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
             vTaskDelete(NULL);
             return;
         } else {
@@ -174,35 +220,47 @@ void master_ota_task(void *pvParameters)
     }
 
     if (skip_update) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
         vTaskDelete(NULL);
         return;
     }
 
+    // 3. Streaming Loop: Baca dari HTTP -> Kirim ke UART
+    uint8_t chunk_buf[CHUNK_SIZE];
     size_t bytes_sent = 0;
     int retry_count = 0;
 
-    while (bytes_sent < slave_size) {
-        size_t send_len = slave_size - bytes_sent;
+    while (bytes_sent < (size_t)fw_size) {
+        size_t send_len = (size_t)fw_size - bytes_sent;
         if (send_len > CHUNK_SIZE) {
             send_len = CHUNK_SIZE;
         }
 
-        bool is_last_chunk = (bytes_sent + send_len >= slave_size);
+        // Baca 1 Chunk langsung dari Server HTTP
+        int bytes_read = esp_http_client_read(client, (char *)chunk_buf, send_len);
+        if (bytes_read <= 0) {
+            ESP_LOGE(TAG, "Gagal/Timeout saat membaca data dari HTTP Server!");
+            break;
+        }
 
-        // JANGAN PANGGIL uart_flush_input DI SINI!
-        uart_write_bytes(MASTER_UART_NUM, (const char *)(firmware_ptr + bytes_sent), send_len);
+        bool is_last_chunk = (bytes_sent + bytes_read >= (size_t)fw_size);
+
+        // Meneruskan chunk data ke UART Slave
+        uart_write_bytes(MASTER_UART_NUM, (const char *)chunk_buf, bytes_read);
         uart_wait_tx_done(MASTER_UART_NUM, pdMS_TO_TICKS(500));
 
+        // Menunggu ACK dari Slave
         int len = uart_read_bytes(MASTER_UART_NUM, rx_buf, 1, pdMS_TO_TICKS(5000));
         if (len > 0 && rx_buf[0] == ACK_BYTE) {
-            bytes_sent += send_len;
+            bytes_sent += bytes_read;
             retry_count = 0;
 
-            int progress = (bytes_sent * 100) / slave_size;
-            ESP_LOGI(TAG, "Progres: %d%% (%u/%u byte)", progress, (unsigned int)bytes_sent, (unsigned int)slave_size);
+            int progress = (bytes_sent * 100) / fw_size;
+            ESP_LOGI(TAG, "Progres Streaming: %d%% (%u/%d byte)", progress, (unsigned int)bytes_sent, fw_size);
 
             if (is_last_chunk) {
-                ESP_LOGI(TAG, "Chunk terakhir diterima. Menunggu verifikasi & finalisasi OTA...");
+                ESP_LOGI(TAG, "Chunk terakhir dikirim. Menunggu verifikasi & finalisasi OTA...");
 
                 if (wait_for_ota_done_signal()) {
                     ESP_LOGI(TAG, "OTA SUKSES - Slave terkonfirmasi valid & akan reboot.");
@@ -212,21 +270,23 @@ void master_ota_task(void *pvParameters)
             }
         } else if (len > 0 && master_check_error(rx_buf[0])) {
             ESP_LOGE(TAG, "OTA dibatalkan karena error di slave pada offset %u.", (unsigned int)bytes_sent);
-            vTaskDelete(NULL);
-            return;
+            break;
         } else {
             retry_count++;
             ESP_LOGW(TAG, "Timeout ACK pada offset %u (Percobaan %d/%d)", (unsigned int)bytes_sent, retry_count, MAX_RETRIES);
 
             if (retry_count >= MAX_RETRIES) {
                 ESP_LOGE(TAG, "Gagal Mengirim OTA: Slave tidak merespon!");
-                vTaskDelete(NULL);
-                return;
+                break;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
+    // Tutup & bersihkan koneksi HTTP Client
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
     ESP_LOGI(TAG, "Task OTA Master selesai.");
     vTaskDelete(NULL);
-}   
+}

@@ -5,7 +5,7 @@
 // SERVER -- ganti semua base URL di sini kalau server pindah, tidak perlu
 // edit banyak file.
 // ============================================================================
-#define OTA_SERVER_BASE        "http://10.45.173.156:8000"
+#define OTA_SERVER_BASE        "http://10.38.223.156:8000"
 
 #define SELF_OTA_URL           OTA_SERVER_BASE "/firmwarePkm.bin"
 

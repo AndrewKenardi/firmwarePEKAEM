@@ -124,6 +124,7 @@ esp_err_t connect_wifi(void)
     // multi-second latency spikes when the radio "wakes up" to send/receive
     // a packet, which matches symptoms like sudden 10+ second HTTP stalls.
     esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_max_tx_power(80); // default ~80 (20dBm); coba 40 (~10dBm) untuk tes
 
     /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
      * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
