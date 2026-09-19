@@ -230,7 +230,7 @@ static void vl53_hardware_reset(void)
     //return err;
 //}
 
-//vl53 ini nanti dihapus klo udah dapet alamat i2c
+//vl53 ini nanti dihapus klo udah dapet alamat
 static esp_err_t vl53_probe(void)
 {
     int found = 0;
@@ -441,10 +441,10 @@ static esp_err_t vl53_sensor_init(void)
 
     VL53_CHECK(vl53_write_u8(0x01, 0xFF));
 
-    VL53_CHECK(vl53_write_u8(0x00, 0x02));
+    VL53_CHECK(vl53_write_u8(0x01, 0x01));
     VL53_CHECK(vl53_single_ref_calibration(0x40));
 
-    VL53_CHECK(vl53_write_u8(0x01, 0x01));
+    VL53_CHECK(vl53_write_u8(0x01, 0x02));
     VL53_CHECK(vl53_single_ref_calibration(0x00));
 
     VL53_CHECK(vl53_write_u8(0x01, 0xE8));
