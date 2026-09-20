@@ -578,7 +578,7 @@ void vTaskVL53L0X(void *pvParameters)
         );
 
         if (valid) {
-            ESP_LOGD(TAG, "Jarak: %u mm", distance_mm);
+            ESP_LOGI(TAG, "Jarak: %u mm", distance_mm);
             ml_stream_set_distance(distance_mm, true);
         } else {
             ml_stream_set_distance(0, false);

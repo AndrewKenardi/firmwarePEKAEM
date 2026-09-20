@@ -35,6 +35,10 @@ static const uint8_t SYNC_BYTES[6] = {0xC0, 0xFF, 0xFE, 0xAA, 0x55, 0x90};
 #define MAX_RETRIES           (5)
 #endif
 
+// Variabel global untuk menampung kustom header dari HTTP Event Handler
+static uint32_t server_calculated_crc = 0;
+static uint32_t server_target_fw_ver = 0;
+
 #pragma pack(push, 1)
 typedef struct {
     uint8_t  sync[6];     
@@ -43,6 +47,28 @@ typedef struct {
     uint32_t fw_version;  
 } ota_header_t;
 #pragma pack(pop)
+
+// HTTP Event Handler untuk menangkap custom header secara real-time
+static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
+{
+    switch(evt->event_id) {
+        case HTTP_EVENT_ON_HEADER:
+            if (strcasecmp(evt->header_key, "X-Firmware-CRC32") == 0) {
+                // Paksa basis 16 karena string format CRC32 berupa hex murni (contoh: 0BD6814D)
+                server_calculated_crc = (uint32_t)strtoul(evt->header_value, NULL, 16);
+                ESP_LOGI(TAG, "Header Tertangkap -> CRC32: %s (0x%08X)", evt->header_value, (unsigned int)server_calculated_crc);
+            }
+            else if (strcasecmp(evt->header_key, "X-Firmware-Version") == 0) {
+                // Versi bisa basis 10 atau 16 tergantung format server Anda
+                server_target_fw_ver = (uint32_t)strtoul(evt->header_value, NULL, 0);
+                ESP_LOGI(TAG, "Header Tertangkap -> Version: %s (0x%08X)", evt->header_value, (unsigned int)server_target_fw_ver);
+            }
+            break;
+        default:
+            break;
+    }
+    return ESP_OK;
+}
 
 static void master_uart_init(void)
 {
@@ -125,11 +151,16 @@ void master_ota_task(void *pvParameters)
 {
     master_uart_init();
 
-    // 1. Inisialisasi HTTP Client untuk membuka koneksi ke Server Lokal
+    // Reset variabel global header sebelum koneksi
+    server_calculated_crc = 0;
+    server_target_fw_ver = 0;
+
+    // 1. Inisialisasi HTTP Client dengan Event Handler
     esp_http_client_config_t http_cfg = {
         .url = FIRMWARE_HTTP_URL,
         .timeout_ms = 10000,
         .buffer_size = 2048,
+        .event_handler = _http_event_handler, // <-- Menangkap header secara otomatis
     };
     esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
     if (client == NULL) {
@@ -157,19 +188,10 @@ void master_ota_task(void *pvParameters)
         vTaskDelete(NULL);
         return;
     }
-
-    // Membaca Custom Header dari Server (jika ada, e.g. X-Firmware-CRC32 & X-Firmware-Version)
-    uint32_t calculated_crc = 0;
-    uint32_t target_fw_ver = FIRMWARE_VERSION;
-
-    char header_val[32] = {0};
-    if (esp_http_client_get_header(client, "X-Firmware-CRC32", (char**)&header_val) == ESP_OK && header_val[0] != 0) {
-        calculated_crc = (uint32_t)strtoul(header_val, NULL, 16);
-    }
-    memset(header_val, 0, sizeof(header_val));
-    if (esp_http_client_get_header(client, "X-Firmware-Version", (char**)&header_val) == ESP_OK && header_val[0] != 0) {
-        target_fw_ver = (uint32_t)strtoul(header_val, NULL, 16);
-    }
+    
+    // Ambil nilai dari variabel global yang sudah terisi lewat Event Handler
+    uint32_t calculated_crc = server_calculated_crc;
+    uint32_t target_fw_ver = (server_target_fw_ver != 0) ? server_target_fw_ver : FIRMWARE_VERSION;
 
     ESP_LOGI(TAG, "==========================================");
     ESP_LOGI(TAG, " Memulai Stream OTA dari Server Lokal");

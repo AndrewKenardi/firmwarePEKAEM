@@ -61,6 +61,46 @@ EventGroupHandle_t cameraEventGroup;
 static const char *TAG_CAMERA = "CAMERA";
 static const char *TAG_MAIN   = "MAIN";
 
+// void vTaskVL53L0X(void *pvParameters) {
+//     // Reset Hardware Sensor via XSHUT (Non-blocking menggunakan FreeRTOS delay)
+//     pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
+//     digitalWrite(VL53L0X_XSHUT_PIN, LOW);
+//     vTaskDelay(pdMS_TO_TICKS(10));
+//     digitalWrite(VL53L0X_XSHUT_PIN, HIGH);
+//     vTaskDelay(pdMS_TO_TICKS(10));
+
+//     // Inisialisasi I2C Wire untuk Arduino Library
+//     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+
+//     if (!lox.begin(VL53L0X_I2C_ADDR, false, &Wire)) {
+//         ESP_LOGE(TAG_VL53, "Gagal menginisialisasi VL53L0X! Cek wiring SDA=%d SCL=%d XSHUT=%d",
+//                  I2C_SDA_PIN, I2C_SCL_PIN, VL53L0X_XSHUT_PIN);
+//         vTaskDelete(NULL); // Hapus task jika hardware tidak terdeteksi
+//         return;
+//     }
+
+//     lox.startRangeContinuous();
+//     ESP_LOGI(TAG_VL53, "Sensor VL53L0X berhasil dimulai!");
+
+//     for (;;) {
+//         if (lox.isRangeComplete()) {
+//             uint16_t range = lox.readRange();
+            
+//             // Filter nilai pembacaan valid (VL53L0X return 8190/8191 jika out of range)
+//             bool is_valid = (range < 8000); 
+//             if (is_valid) {
+//                 ESP_LOGD(TAG_VL53, "Distance: %d mm", range);
+//                 ml_stream_set_distance(range, true);
+//             } else {
+//                 ml_stream_set_distance(0, false);
+//             }
+//         }
+
+//         // Sampling rate 50ms (~20 FPS) agar realtime sinkron dengan Frame Kamera
+//         vTaskDelay(pdMS_TO_TICKS(50));
+//     }
+// }
+
 // ============================================================================
 // MAIN PROGRAM
 // ============================================================================
@@ -306,40 +346,40 @@ extern "C" void app_main()
     );
 
     // Beri waktu sistem kamera, Wi-Fi, dan WebSocket untuk stabil.
-    vTaskDelay(pdMS_TO_TICKS(10000));
+    // vTaskDelay(pdMS_TO_TICKS(10000));
 
-    // ========================================================================
-    // 12. TASK SENSOR JARAK VL53L0X
-    //
-    // Kode I2C native ESP-IDF v6 berada di vl53l0x_task.c.
-    // Tidak memakai Wire, Adafruit, atau driver/i2c.h.
-    // ========================================================================
+    // // ========================================================================
+    // // 12. TASK SENSOR JARAK VL53L0X
+    // //
+    // // Kode I2C native ESP-IDF v6 berada di vl53l0x_task.c.
+    // // Tidak memakai Wire, Adafruit, atau driver/i2c.h.
+    // // ========================================================================
 
-    BaseType_t res_vl53 = xTaskCreate(
-        vTaskVL53L0X,
-        "taskVL53L0X",
-        4096,
-        NULL,
-        14,
-        NULL
-    );
+    // BaseType_t res_vl53 = xTaskCreate(
+    //     vTaskVL53L0X,
+    //     "taskVL53L0X",
+    //     4096,
+    //     NULL,
+    //     14,
+    //     NULL
+    // );
 
-    if (res_vl53 != pdPASS) {
-        ESP_LOGE(TAG_MAIN, "Gagal membuat taskVL53L0X.");
-    } else {
-        ESP_LOGI(TAG_MAIN, "taskVL53L0X berhasil dibuat.");
-    }
+    // if (res_vl53 != pdPASS) {
+    //     ESP_LOGE(TAG_MAIN, "Gagal membuat taskVL53L0X.");
+    // } else {
+    //     ESP_LOGI(TAG_MAIN, "taskVL53L0X berhasil dibuat.");
+    // }
 
-    // ========================================================================
-    // 13. TASK OTA MASTER
-    // ========================================================================
+    // // ========================================================================
+    // // 13. TASK OTA MASTER
+    // // ========================================================================
 
-    xTaskCreate(
-        master_ota_task,
-        "MasterOtaTask",
-        3072,
-        NULL,
-        10,
-        NULL
-    );
+    // xTaskCreate(
+    //     master_ota_task,
+    //     "MasterOtaTask",
+    //     3072,
+    //     NULL,
+    //     10,
+    //     NULL
+    // );
 }
