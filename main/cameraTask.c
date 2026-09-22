@@ -8,14 +8,17 @@
 #include "esp_camera.h"
 
 // FIX 1: Naikkan XCLK ke 20 MHz (Standar OV2640)
-#define CONFIG_XCLK_FREQ 10000000  
+#define CONFIG_XCLK_FREQ 20000000  
 #define JPEG_QUALITY 12
-#define FB_COUNT 2
+#define FB_COUNT 3
 static const char *TAG_I2C_DIAG = "CAM_I2C_DIAG";
 
 #define CAM_PWR_GPIO CAM_PIN_PWDN 
 
 static const char *TAG = "CAM_TASK";
+
+volatile uint32_t g_cam_stage = 0;  // 1=di dalam fb_get, 2=setelah fb_get, 3=xQueueSend, 4=vTaskDelay
+volatile uint32_t g_cam_iter = 0, g_cam_fb_ok = 0, g_cam_fb_null = 0, g_cam_q_ok = 0, g_cam_q_drop = 0;
 
 extern QueueHandle_t frame_queue;
 extern EventGroupHandle_t cameraEventGroup;
@@ -85,44 +88,47 @@ void vTaskCameraRead(void *pvParameters)
 {
     ESP_LOGI(TAG, "Memulai Task Pembacaan Kamera...");
 
+    int64_t t0 = esp_timer_get_time();
+
     for (;;) {
-        // FIX 2: Cek apakah Queue valid sebelum eksekusi capture
+        // STAT di awal loop supaya selalu tercetak
+        if (esp_timer_get_time() - t0 >= 2000000) {
+            ESP_LOGI(TAG, "STAT 2s: iter=%u fb_ok=%u fb_null=%u q_ok=%u q_drop=%u",
+                     (unsigned)g_cam_iter, (unsigned)g_cam_fb_ok,
+                     (unsigned)g_cam_fb_null, (unsigned)g_cam_q_ok,
+                     (unsigned)g_cam_q_drop);
+            g_cam_iter = g_cam_fb_ok = g_cam_fb_null = g_cam_q_ok = g_cam_q_drop = 0;
+            t0 = esp_timer_get_time();
+        }
+
         if (frame_queue == NULL) {
             ESP_LOGE(TAG, "frame_queue masih NULL! Menunggu inisialisasi queue...");
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        if (camera_capture_mutex != NULL) {
-            xSemaphoreTake(camera_capture_mutex, portMAX_DELAY);
-        }
-
-        // Ambil frame buffer dari kamera
+        g_cam_iter++;
+        g_cam_stage = 1;
         camera_fb_t *fb = esp_camera_fb_get();
+        g_cam_stage = 2;
 
-        if (camera_capture_mutex != NULL) {
-            xSemaphoreGive(camera_capture_mutex);
-        }
-
-        // FIX 3: Validasi hasil capture
         if (!fb) {
+            g_cam_fb_null++;
             ESP_LOGE(TAG, "Gagal mengambil frame buffer (fb == NULL)");
-            vTaskDelay(pdMS_TO_TICKS(100)); // Beri jeda sebelum mencoba lagi
+            vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        g_cam_fb_ok++;
 
-        // FIX 4: Kirim frame pointer ke Queue dengan penanganan yang aman
+        g_cam_stage = 3;
         if (xQueueSend(frame_queue, &fb, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "Queue penuh, melepaskan frame ini...");
-            if (camera_capture_mutex != NULL) {
-                xSemaphoreTake(camera_capture_mutex, portMAX_DELAY);
-            }
-            esp_camera_fb_return(fb); // Kembalikan buffer agar tidak leak
-            if (camera_capture_mutex != NULL) {
-                xSemaphoreGive(camera_capture_mutex);
-            }
+            g_cam_q_drop++;
+            esp_camera_fb_return(fb);   // queue penuh, buang frame ini
+        } else {
+            g_cam_q_ok++;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(50)); // Target ~20 fps
+        g_cam_stage = 4;
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }

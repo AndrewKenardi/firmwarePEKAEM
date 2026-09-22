@@ -34,6 +34,7 @@ extern "C" {
 #include "cameraTask.h"
 #include "taskHandlers.h"
 #include "c3_programmer.h"
+#include "net_discovery.h"
 }
 
 #ifndef WIFI_CONNECTED_BIT
@@ -61,46 +62,6 @@ EventGroupHandle_t cameraEventGroup;
 static const char *TAG_CAMERA = "CAMERA";
 static const char *TAG_MAIN   = "MAIN";
 
-// void vTaskVL53L0X(void *pvParameters) {
-//     // Reset Hardware Sensor via XSHUT (Non-blocking menggunakan FreeRTOS delay)
-//     pinMode(VL53L0X_XSHUT_PIN, OUTPUT);
-//     digitalWrite(VL53L0X_XSHUT_PIN, LOW);
-//     vTaskDelay(pdMS_TO_TICKS(10));
-//     digitalWrite(VL53L0X_XSHUT_PIN, HIGH);
-//     vTaskDelay(pdMS_TO_TICKS(10));
-
-//     // Inisialisasi I2C Wire untuk Arduino Library
-//     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-//     if (!lox.begin(VL53L0X_I2C_ADDR, false, &Wire)) {
-//         ESP_LOGE(TAG_VL53, "Gagal menginisialisasi VL53L0X! Cek wiring SDA=%d SCL=%d XSHUT=%d",
-//                  I2C_SDA_PIN, I2C_SCL_PIN, VL53L0X_XSHUT_PIN);
-//         vTaskDelete(NULL); // Hapus task jika hardware tidak terdeteksi
-//         return;
-//     }
-
-//     lox.startRangeContinuous();
-//     ESP_LOGI(TAG_VL53, "Sensor VL53L0X berhasil dimulai!");
-
-//     for (;;) {
-//         if (lox.isRangeComplete()) {
-//             uint16_t range = lox.readRange();
-            
-//             // Filter nilai pembacaan valid (VL53L0X return 8190/8191 jika out of range)
-//             bool is_valid = (range < 8000); 
-//             if (is_valid) {
-//                 ESP_LOGD(TAG_VL53, "Distance: %d mm", range);
-//                 ml_stream_set_distance(range, true);
-//             } else {
-//                 ml_stream_set_distance(0, false);
-//             }
-//         }
-
-//         // Sampling rate 50ms (~20 FPS) agar realtime sinkron dengan Frame Kamera
-//         vTaskDelay(pdMS_TO_TICKS(50));
-//     }
-// }
-
 // ============================================================================
 // MAIN PROGRAM
 // ============================================================================
@@ -118,6 +79,7 @@ extern "C" void app_main()
     // ========================================================================
 
     esp_err_t ret = nvs_flash_init();
+    ESP_LOGW(TAG_MAIN, "reset reason=%d", (int)esp_reset_reason());
 
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
         ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -242,27 +204,40 @@ extern "C" void app_main()
     );
 
     // ========================================================================
-    // 8. UDP LOGGER
+    // 8. DISCOVERY SERVER (dinamis, bukan IP hardcoded) + UDP LOGGER
     // ========================================================================
+    //
+    // net_discovery_find_server() broadcast ke jaringan lokal mencari server
+    // (lihat net_discovery.c & discovery_responder.py). Hasilnya dipakai di
+    // sini untuk UDP Logger, dan juga dipakai vTaskUpdateManager (ota_task.c)
+    // serta master_ota_task (c3_programmer.c) untuk OTA -- jadi walau IP
+    // hotspot Anda ganti-ganti, tidak perlu edit source code sama sekali,
+    // selama ESP32 & server tetap di jaringan yang sama.
 
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(
-            TAG_MAIN,
-            "Wi-Fi terhubung. Menginisialisasi UDP Logger."
-        );
+        ESP_LOGI(TAG_MAIN, "Wi-Fi terhubung. Mencari server (discovery)...");
 
-        udp_logger_config_t log_cfg = {
-            .server_ip = "10.38.223.156",
-            .server_port = 5005,
-            .queue_len = 32,
-            .sender_priority = 3,
-        };
+        if (net_discovery_find_server(NULL, 0) == ESP_OK) {
+            ESP_LOGI(TAG_MAIN, "Server ditemukan di %s. Menginisialisasi UDP Logger.",
+                     net_discovery_get_server_ip());
 
-        udp_logger_init(&log_cfg);
+            udp_logger_config_t log_cfg = {
+                .server_ip = net_discovery_get_server_ip(),
+                .server_port = 5005,
+                .queue_len = 32,
+                .sender_priority = 3,
+            };
+
+            udp_logger_init(&log_cfg);
+        } else {
+            ESP_LOGE(TAG_MAIN,
+                     "Server tidak ditemukan lewat discovery. UDP Logger dilewati -- "
+                     "vTaskUpdateManager (OTA) akan tetap coba discovery ulang sendiri nanti.");
+        }
     } else {
         ESP_LOGE(
             TAG_MAIN,
-            "Wi-Fi gagal terhubung dalam %d ms. UDP Logger dilewati.",
+            "Wi-Fi gagal terhubung dalam %d ms. Discovery & UDP Logger dilewati.",
             WIFI_CONNECT_TIMEOUT_MS
         );
     }
@@ -318,68 +293,62 @@ extern "C" void app_main()
     // 11. TASK PEMBACAAN KAMERA
     // ========================================================================
 
+    vTaskDelay(pdTICKS_TO_MS(2000));
+
     EventBits_t cam_bits = xEventGroupGetBits(cameraEventGroup);
 
     if (cam_bits & IS_CAMERA_CONNECTED_BIT) {
-        xTaskCreateStaticPinnedToCore(
-            vTaskCameraRead,
-            "taskCameraRead",
-            CAMERA_STACK_SIZE,
-            NULL,
-            15,
-            xCameraReadStack,
-            &xCameraReadTaskBuffer,
-            1
-        );
+        TaskHandle_t cam_h = xTaskCreateStaticPinnedToCore(
+            vTaskCameraRead, "taskCameraRead", CAMERA_STACK_SIZE, NULL, 15,
+            xCameraReadStack, &xCameraReadTaskBuffer, 1);
+        ESP_LOGI(TAG_MAIN, "taskCameraRead handle=%p (NULL = gagal dibuat), cam_bits=0x%x",
+                (void *)cam_h, (unsigned)cam_bits);
     } else {
-        ESP_LOGW(
-            TAG_MAIN,
-            "Task kamera dilewati karena kamera tidak terdeteksi."
-        );
+        ESP_LOGW(TAG_MAIN, "Task kamera dilewati karena kamera tidak terdeteksi.");
     }
 
-    ESP_LOGI(
-        "HEAPP",
-        "PSRAM total: %lu, PSRAM free: %lu",
-        (unsigned long)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
-        (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
-    );
+        ESP_LOGI(
+            "HEAPP",
+            "PSRAM total: %lu, PSRAM free: %lu",
+            (unsigned long)heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
+            (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
+        );
 
     // Beri waktu sistem kamera, Wi-Fi, dan WebSocket untuk stabil.
-    // vTaskDelay(pdMS_TO_TICKS(10000));
+    vTaskDelay(pdMS_TO_TICKS(10000));
 
-    // // ========================================================================
-    // // 12. TASK SENSOR JARAK VL53L0X
-    // //
-    // // Kode I2C native ESP-IDF v6 berada di vl53l0x_task.c.
-    // // Tidak memakai Wire, Adafruit, atau driver/i2c.h.
-    // // ========================================================================
+    // ========================================================================
+    // 12. TASK SENSOR JARAK VL53L0X
+    //
+    // Kode I2C native ESP-IDF v6 berada di vl53l0x_task.c.
+    // Tidak memakai Wire, Adafruit, atau driver/i2c.h.
+    // ========================================================================
 
-    // BaseType_t res_vl53 = xTaskCreate(
-    //     vTaskVL53L0X,
-    //     "taskVL53L0X",
-    //     4096,
-    //     NULL,
-    //     14,
-    //     NULL
-    // );
+    BaseType_t res_vl53 = xTaskCreate(
+        vTaskVL53L0X,
+        "taskVL53L0X",
+        4096,
+        NULL,
+        14,
+        NULL
+    );
 
-    // if (res_vl53 != pdPASS) {
-    //     ESP_LOGE(TAG_MAIN, "Gagal membuat taskVL53L0X.");
-    // } else {
-    //     ESP_LOGI(TAG_MAIN, "taskVL53L0X berhasil dibuat.");
-    // }
+    if (res_vl53 != pdPASS) {
+        ESP_LOGE(TAG_MAIN, "Gagal membuat taskVL53L0X.");
+    } else {
+        ESP_LOGI(TAG_MAIN, "taskVL53L0X berhasil dibuat.");
+    }
 
-    // // ========================================================================
-    // // 13. TASK OTA MASTER
-    // // ========================================================================
+    // ================  ========================================================
+    // 13. TASK OTA MASTER
+    // ========================================================================
 
-    // xTaskCreate(
-    //     master_ota_task,
-    //     "MasterOtaTask",
-    //     3072,
-    //     NULL,
-    //     10,
-    //     NULL
-    // );
+    xTaskCreate(
+        master_ota_task,
+        "MasterOtaTask",
+        3072,
+        NULL,
+        10,
+        NULL
+    );
 }

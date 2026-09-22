@@ -7,6 +7,8 @@ set(srcs "main.cpp"
          "ota_task.c"
          "c3_programmer.c"
          "uartTx.c"
+         "c3_programmer_version.c"
+         "net_discovery.c"
          )
 idf_component_register(SRCS ${srcs}
                     INCLUDE_DIRS "." "../include"

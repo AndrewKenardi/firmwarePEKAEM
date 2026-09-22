@@ -11,11 +11,16 @@
 #include "esp_http_client.h"
 #include "fw_version.h"
 #include "c3_programmer.h"
+#include "net_discovery.h"
 
 static const char *TAG = "MASTER_OTA";
 
-// Konfigurasi URL HTTP Server Lokal
-#define FIRMWARE_HTTP_URL     "http://10.38.223.156:8000/ESP-C3_Firmware.bin"
+// URL firmware slave (C3) TIDAK di-hardcode lagi -- host-nya didapat
+// runtime dari net_discovery_find_server() (lihat net_discovery.c +
+// discovery_responder.py di server), supaya tetap jalan walau IP hotspot
+// berubah, selama ESP32 & server 1 jaringan.
+#define FIRMWARE_HTTP_PORT    8000
+#define FIRMWARE_HTTP_PATH    "/ESP-C3_Firmware.bin"
 
 static const uint8_t SYNC_BYTES[6] = {0xC0, 0xFF, 0xFE, 0xAA, 0x55, 0x90};
 #define ACK_BYTE              0x06
@@ -151,13 +156,38 @@ void master_ota_task(void *pvParameters)
 {
     master_uart_init();
 
+    // Sampai terbukti sebaliknya (handshake SKIP_BYTE, atau OTA selesai +
+    // terverifikasi di bawah), anggap slave BELUM tentu pada versi yang
+    // diharapkan. Ini menjaga wifiStreamTask tidak meneruskan perintah ke
+    // slave selama proses cek/flash OTA sedang berlangsung.
+    c3_programmer_set_version_match(false);
+
     // Reset variabel global header sebelum koneksi
     server_calculated_crc = 0;
     server_target_fw_ver = 0;
 
+    // Cari IP server lewat discovery (lihat net_discovery.c). Kalau belum
+    // pernah ketemu sama sekali sejak boot (mis. task ini jalan sebelum
+    // discovery di main.cpp sempat sukses), coba discovery langsung di sini.
+    const char *server_ip = net_discovery_get_server_ip();
+    if (server_ip == NULL || server_ip[0] == '\0') {
+        ESP_LOGW(TAG, "IP server belum diketahui, mencoba discovery...");
+        if (net_discovery_find_server(NULL, 0) != ESP_OK) {
+            ESP_LOGE(TAG, "Server tidak ditemukan, OTA slave dilewati kali ini.");
+            vTaskDelete(NULL);
+            return;
+        }
+        server_ip = net_discovery_get_server_ip();
+    }
+
+    char firmware_url[96];
+    snprintf(firmware_url, sizeof(firmware_url), "http://%s:%d%s",
+             server_ip, FIRMWARE_HTTP_PORT, FIRMWARE_HTTP_PATH);
+    ESP_LOGI(TAG, "URL firmware slave (hasil discovery): %s", firmware_url);
+
     // 1. Inisialisasi HTTP Client dengan Event Handler
     esp_http_client_config_t http_cfg = {
-        .url = FIRMWARE_HTTP_URL,
+        .url = firmware_url,
         .timeout_ms = 10000,
         .buffer_size = 2048,
         .event_handler = _http_event_handler, // <-- Menangkap header secara otomatis
@@ -226,6 +256,9 @@ void master_ota_task(void *pvParameters)
             vTaskDelay(pdMS_TO_TICKS(200)); 
         } else if (len > 0 && rx_buf[0] == SKIP_BYTE) {
             ESP_LOGI(TAG, "Versi Slave sudah sama. OTA dilewati.");
+            // Slave sendiri yang konfirmasi versinya sudah sama dengan target
+            // -> aman untuk mulai meneruskan perintah/respon server ke slave.
+            c3_programmer_set_version_match(true);
             skip_update = true;
             synced = true; 
         } else if (len > 0 && master_check_error(rx_buf[0])) {
@@ -286,8 +319,13 @@ void master_ota_task(void *pvParameters)
 
                 if (wait_for_ota_done_signal()) {
                     ESP_LOGI(TAG, "OTA SUKSES - Slave terkonfirmasi valid & akan reboot.");
+                    // Firmware baru sudah terverifikasi cocok dengan target versi
+                    // yang dikirim di header. Slave akan reboot sesaat lagi;
+                    // setelah ini aman meneruskan perintah/respon server ke slave.
+                    c3_programmer_set_version_match(true);
                 } else {
                     ESP_LOGE(TAG, "OTA TIDAK SELESAI: gagal mendapat konfirmasi dari slave.");
+                    c3_programmer_set_version_match(false);
                 }
             }
         } else if (len > 0 && master_check_error(rx_buf[0])) {

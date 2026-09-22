@@ -13,6 +13,7 @@
 #include <string.h>
 #include "ota_config.h"
 #include "connect_wifi.h"
+#include "net_discovery.h"
 #include "freertos/event_groups.h"
 
 extern EventGroupHandle_t wifiEventGroup;
@@ -24,6 +25,24 @@ extern EventGroupHandle_t wifiEventGroup;
 static const char *TAG_OTA = "OTA";
 static const char *TAG = "VERSION_CHECK";
 
+// Dibangun runtime dari IP hasil discovery (net_discovery.c) + port/path
+// tetap dari ota_config.h. Tidak ada IP hardcoded lagi di sini.
+static char s_self_ota_url[96];
+
+// Kembalikan URL OTA firmware ESP32-S saat ini, atau NULL kalau server
+// belum pernah berhasil ditemukan lewat discovery (silakan panggil
+// net_discovery_find_server() lagi kalau ini NULL).
+static const char *ota_get_self_ota_url(void)
+{
+    const char *ip = net_discovery_get_server_ip();
+    if (ip == NULL || ip[0] == '\0') {
+        return NULL;
+    }
+    snprintf(s_self_ota_url, sizeof(s_self_ota_url), "http://%s:%d%s",
+             ip, OTA_SERVER_PORT, SELF_OTA_PATH);
+    return s_self_ota_url;
+}
+
 void vTaskUpdateManager(void *pvParameters)
 {
     xEventGroupWaitBits(wifiEventGroup, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
@@ -34,10 +53,23 @@ void vTaskUpdateManager(void *pvParameters)
         // 1. Cek update ESP32-S sendiri DULU. Kalau ada update, restart
         //    terjadi di dalam start_ota_update() -- baris berikutnya
         //    tidak akan tercapai.
-        ESP_LOGI(TAG, "Cek update firmware ESP32-S...");
-        esp_err_t self_ret = start_ota_update(SELF_OTA_URL);
-        if (self_ret != ESP_OK) {
-            ESP_LOGW(TAG, "Cek update ESP32-S gagal: %s", esp_err_to_name(self_ret));
+        const char *self_url = ota_get_self_ota_url();
+        if (self_url == NULL) {
+            ESP_LOGW(TAG, "IP server belum diketahui, coba discovery ulang...");
+            if (net_discovery_find_server(NULL, 0) == ESP_OK) {
+                self_url = ota_get_self_ota_url();
+            }
+        }
+
+        if (self_url != NULL) {
+            ESP_LOGI(TAG, "Cek update firmware ESP32-S...");
+            esp_err_t self_ret = start_ota_update(self_url);
+            if (self_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Cek update ESP32-S gagal: %s", esp_err_to_name(self_ret));
+                any_failure = true;
+            }
+        } else {
+            ESP_LOGW(TAG, "Server tetap tidak ditemukan, cek update dilewati kali ini.");
             any_failure = true;
         }
 

@@ -2,12 +2,15 @@
 #define OTA_CONFIG_H
 
 // ============================================================================
-// SERVER -- ganti semua base URL di sini kalau server pindah, tidak perlu
-// edit banyak file.
+// SERVER -- IP TIDAK LAGI di-hardcode di sini. Host server didapat lewat
+// net_discovery_find_server() (broadcast UDP, lihat net_discovery.c +
+// discovery_responder.py) saat runtime, supaya tetap jalan walau IP
+// hotspot berubah-ubah, selama ESP32 & server 1 jaringan. Yang masih tetap
+// (jarang berubah) cuma port & path-nya, jadi itu yang di-define di sini.
+// URL lengkap dibangun runtime oleh ota_get_self_ota_url() di ota_task.c.
 // ============================================================================
-#define OTA_SERVER_BASE        "http://10.38.223.156:8000"
-
-#define SELF_OTA_URL           OTA_SERVER_BASE "/firmwarePkm.bin"
+#define OTA_SERVER_PORT         8000
+#define SELF_OTA_PATH           "/firmwarePkm.bin"
 
 // ============================================================================
 // UART & pin kontrol ke ESP32-C3
