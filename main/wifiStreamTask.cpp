@@ -245,26 +245,45 @@ static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
             memcpy(cmd_buf, payload, copy_len);
             cmd_buf[copy_len] = '\0';
 
+            // Trim whitespace and newlines
+            char *start = cmd_buf;
+            while (*start == ' ' || *start == '\r' || *start == '\n') start++;
+            char *end_ptr = start + strlen(start) - 1;
+            while (end_ptr >= start && (*end_ptr == ' ' || *end_ptr == '\r' || *end_ptr == '\n')) {
+                *end_ptr = '\0';
+                end_ptr--;
+            }
+
+            // Filter out unknown commands and status messages
+            if (strcmp(start, "normal") != 0 &&
+                strcmp(start, "5") != 0 &&
+                strcmp(start, "10") != 0 &&
+                strcmp(start, "dry") != 0 &&
+                strcmp(start, "20") != 0) {
+                ESP_LOGD(TAG_WS, "[WS] Abaikan pesan (bukan command valid): '%s'", start);
+                break;
+            }
+
             // Server bisa membalas berkali-kali per detik (mis. hasil per
             // frame kamera) walau isinya belum berubah. Kalau isinya SAMA
             // dengan yang terakhir kali berhasil diteruskan, jangan kirim
             // ulang -- supaya slave tidak menerima command yang sama terus-
             // menerus (yang bikin suara terkesan "restart" berulang-ulang).
             static char s_last_forwarded[CMD_BUF_FORWARD_SIZE] = {0};
-            if (strcmp(cmd_buf, s_last_forwarded) == 0) {
+            if (strcmp(start, s_last_forwarded) == 0) {
                 break;
             }
 
             bool forwarded = master_uart_send_cmd_with_ack(
-                cmd_buf, SLAVE_FORWARD_ACK_TIMEOUT_MS, MAX_RETRIES);
+                start, SLAVE_FORWARD_ACK_TIMEOUT_MS, MAX_RETRIES);
 
             if (forwarded) {
-                ESP_LOGI(TAG_WS, "[WS->UART] Respon server diteruskan ke slave: %s", cmd_buf);
-                strcpy(s_last_forwarded, cmd_buf);
+                ESP_LOGI(TAG_WS, "[WS->UART] Respon server diteruskan ke slave: %s", start);
+                strcpy(s_last_forwarded, start);
             } else {
                 ESP_LOGE(TAG_WS,
                          "[WS->UART] Gagal meneruskan respon ke slave setelah %d percobaan: %s",
-                         MAX_RETRIES, cmd_buf);
+                         MAX_RETRIES, start);
                 // TIDAK di-update s_last_forwarded, supaya percobaan
                 // berikutnya (walau isinya sama) tetap dicoba kirim ulang.
             }
@@ -370,7 +389,7 @@ extern "C" void vTaskMLStream(void *pvParameters) {
         if (xQueueReceive(frame_queue, &fb, pdMS_TO_TICKS(20)) == pdTRUE && fb != NULL) {
 
             const size_t jpeg_len = fb->len;
-            const size_t required_packet_size = 1 + robot_id_len + 1 + jpeg_len;
+            const size_t required_packet_size = 1 + robot_id_len + 1 + 1 + 2 + jpeg_len;
 
             if (s_tx_packet_buffer != NULL && required_packet_size <= MAX_TX_PACKET_SIZE) {
 
@@ -378,13 +397,23 @@ extern "C" void vTaskMLStream(void *pvParameters) {
                 bool distance_valid = false;
                 ml_get_distance(&distance_mm, &distance_valid);
                 uint8_t is_dekat = (distance_valid && distance_mm <= EYE_DISTANCE_THRESHOLD_MM) ? 1 : 0;
-                // uint8_t is_dekat = true;
+                
+                uint16_t dist_to_send = distance_valid ? distance_mm : 0xFFFF;
+                
+                // Tambahkan log serial ringkas
+                ESP_LOGD(TAG_WS, "Paket akan dikirim: ID=%s, dist=%u mm (valid=%d), dekat=%d, jpeg_len=%u", 
+                         robot_id, dist_to_send, distance_valid, is_dekat, (unsigned)jpeg_len);
 
-                // Susun Payload Biner: [Len ID][ID Robot][Is Dekat][Data JPEG]
-                s_tx_packet_buffer[0] = robot_id_len;
-                memcpy(s_tx_packet_buffer + 1, robot_id, robot_id_len);
-                s_tx_packet_buffer[1 + robot_id_len] = is_dekat;
-                memcpy(s_tx_packet_buffer + 1 + robot_id_len + 1, fb->buf, jpeg_len);
+                // Susun Payload Biner: [Len ID][ID Robot][Is Dekat][0xA5][Dist Hi][Dist Lo][Data JPEG]
+                size_t offset = 0;
+                s_tx_packet_buffer[offset++] = robot_id_len;
+                memcpy(s_tx_packet_buffer + offset, robot_id, robot_id_len);
+                offset += robot_id_len;
+                s_tx_packet_buffer[offset++] = is_dekat;
+                s_tx_packet_buffer[offset++] = 0xA5; // Marker
+                s_tx_packet_buffer[offset++] = (uint8_t)((dist_to_send >> 8) & 0xFF);
+                s_tx_packet_buffer[offset++] = (uint8_t)(dist_to_send & 0xFF);
+                memcpy(s_tx_packet_buffer + offset, fb->buf, jpeg_len);
 
                 // Data sudah tersalin, lepas frame buffer kamera sekarang
                 ml_safe_fb_return(fb);
@@ -395,7 +424,7 @@ extern "C" void vTaskMLStream(void *pvParameters) {
                 static bool jpeg_checked = false;
                 if (!jpeg_checked && jpeg_len > 4) {
                     jpeg_checked = true;
-                    const uint8_t *j = s_tx_packet_buffer + 1 + robot_id_len + 1;
+                    const uint8_t *j = s_tx_packet_buffer + offset;
                     ESP_LOGI(TAG_WS, "JPEG cek: len=%u head=%02X%02X (harus FFD8) tail=%02X%02X (harus FFD9)",
                             (unsigned)jpeg_len, j[0], j[1], j[jpeg_len - 2], j[jpeg_len - 1]);
                 }
