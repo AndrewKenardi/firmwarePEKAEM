@@ -9,8 +9,8 @@
 
 // FIX 1: Naikkan XCLK ke 20 MHz (Standar OV2640)
 #define CONFIG_XCLK_FREQ 20000000  
-#define JPEG_QUALITY 12
-#define FB_COUNT 3
+#define JPEG_QUALITY 16
+#define FB_COUNT 2
 static const char *TAG_I2C_DIAG = "CAM_I2C_DIAG";
 
 #define CAM_PWR_GPIO CAM_PIN_PWDN 
@@ -129,6 +129,6 @@ void vTaskCameraRead(void *pvParameters)
         }
 
         g_cam_stage = 4;
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(30));
     }
 }

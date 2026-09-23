@@ -349,8 +349,12 @@ extern "C" void vTaskMLStream(void *pvParameters) {
     // TES SEMENTARA: pura-pura ada objek 10 cm supaya is_dekat = 1.
     // Hapus tanda komentar untuk mengetes reaksi server, lalu hapus lagi setelahnya.
     // ml_stream_set_distance(100, true);
+    const TickType_t target_frame_interval_ticks = pdMS_TO_TICKS(59);
 
-    for (;;) {
+for (;;) {
+        // Catat waktu mulai iterasi loop untuk frame pacing
+        TickType_t xLoopStartTick = xTaskGetTickCount();
+
         // Proses polling internal library WebSocket (Ping/Pong, Reconnect, RX)
         esp_task_wdt_reset();
         s_ws.loop();
@@ -386,7 +390,8 @@ extern "C" void vTaskMLStream(void *pvParameters) {
 
         // 2. AMBIL FRAME DARI QUEUE
         camera_fb_t *fb = NULL;
-        if (xQueueReceive(frame_queue, &fb, pdMS_TO_TICKS(20)) == pdTRUE && fb != NULL) {
+        // Gunakan timeout kecil agar task tidak blocking terlalu lama jika antrean kosong
+        if (xQueueReceive(frame_queue, &fb, pdMS_TO_TICKS(10)) == pdTRUE && fb != NULL) {
 
             const size_t jpeg_len = fb->len;
             const size_t required_packet_size = 1 + robot_id_len + 1 + 1 + 2 + jpeg_len;
@@ -396,14 +401,15 @@ extern "C" void vTaskMLStream(void *pvParameters) {
                 uint16_t distance_mm = 0;
                 bool distance_valid = false;
                 ml_get_distance(&distance_mm, &distance_valid);
-                uint8_t is_dekat = (distance_valid && distance_mm <= EYE_DISTANCE_THRESHOLD_MM) ? 1 : 0;
-                
-                uint16_t dist_to_send = distance_valid ? distance_mm : 0xFFFF;
-                
-                // Tambahkan log serial ringkas
-                ESP_LOGD(TAG_WS, "Paket akan dikirim: ID=%s, dist=%u mm (valid=%d), dekat=%d, jpeg_len=%u", 
-                         robot_id, dist_to_send, distance_valid, is_dekat, (unsigned)jpeg_len);
 
+                // --- PAKSA SELALU 50 CM (500 mm) ---
+                distance_mm = 500;
+                distance_valid = true;
+                // ------------------------------------
+
+                uint8_t is_dekat = (distance_valid && distance_mm <= EYE_DISTANCE_THRESHOLD_MM) ? 1 : 0;
+                uint16_t dist_to_send = distance_valid ? distance_mm : 0xFFFF;
+            
                 // Susun Payload Biner: [Len ID][ID Robot][Is Dekat][0xA5][Dist Hi][Dist Lo][Data JPEG]
                 size_t offset = 0;
                 s_tx_packet_buffer[offset++] = robot_id_len;
@@ -421,13 +427,6 @@ extern "C" void vTaskMLStream(void *pvParameters) {
 
                 // Ukur berapa lama sendBIN() memblokir
                 int64_t t_send0 = esp_timer_get_time();
-                static bool jpeg_checked = false;
-                if (!jpeg_checked && jpeg_len > 4) {
-                    jpeg_checked = true;
-                    const uint8_t *j = s_tx_packet_buffer + offset;
-                    ESP_LOGI(TAG_WS, "JPEG cek: len=%u head=%02X%02X (harus FFD8) tail=%02X%02X (harus FFD9)",
-                            (unsigned)jpeg_len, j[0], j[1], j[jpeg_len - 2], j[jpeg_len - 1]);
-                }
                 bool sent = s_ws.sendBIN(s_tx_packet_buffer, required_packet_size);
                 int64_t send_us = esp_timer_get_time() - t_send0;
 
@@ -439,20 +438,18 @@ extern "C" void vTaskMLStream(void *pvParameters) {
                     dbg_bytes += required_packet_size;
                     total_send_us += send_us;
                     if (send_us > max_send_us) max_send_us = send_us;
-
-                    //Testing
-                    // vTaskDelay(pdMS_TO_TICKS(STREAM_FRAME_DELAY_MS));
-
-                    taskYIELD();
                 }
             } else {
                 ESP_LOGE(TAG_WS, "Ukuran paket (%d bytes) melebihi batas buffer!", (int)required_packet_size);
                 ml_safe_fb_return(fb);
                 fb = NULL;
             }
-        } else {
-            // Queue kosong, beri CPU ke task lain
-            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+
+        // 3. FRAME PACING: Pastikan total durasi 1 loop pas ~59 ms (17 FPS)
+        TickType_t xCurrentTick = xTaskGetTickCount();
+        if (xCurrentTick - xLoopStartTick < target_frame_interval_ticks) {
+            vTaskDelay(target_frame_interval_ticks - (xCurrentTick - xLoopStartTick));
         }
     }
 }

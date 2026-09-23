@@ -33,7 +33,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 # ============================================================================
 
 # Format Hex, contoh: 0x00010003 -- HARUS maksimal 8 digit hex (uint32_t)!
-FIRMWARE_VERSION_HEX = "0x000100034"
+FIRMWARE_VERSION_HEX = "0x000100035"
 
 OTA_HTTP_PORT = 8000
 LOG_UDP_PORT = 5005

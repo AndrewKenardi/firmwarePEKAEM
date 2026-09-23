@@ -48,7 +48,7 @@
 
 #define VL53L0X_I2C_TIMEOUT_MS     100
 #define VL53L0X_BOOT_DELAY_MS      100
-#define VL53L0X_SAMPLE_PERIOD_MS   50
+#define VL53L0X_SAMPLE_PERIOD_MS   5000
 
 #define VL53L0X_MIN_DISTANCE_MM    30
 #define VL53L0X_MAX_DISTANCE_MM    2000
@@ -578,7 +578,7 @@ void vTaskVL53L0X(void *pvParameters)
         );
 
         if (valid) {
-            ESP_LOGI(TAG, "Jarak: %u mm", distance_mm);
+            ESP_LOGD(TAG, "Jarak: %u mm", distance_mm);
             ml_stream_set_distance(distance_mm, true);
         } else {
             ml_stream_set_distance(0, false);
