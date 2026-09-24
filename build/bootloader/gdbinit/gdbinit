@@ -1,0 +1,2 @@
+source D:/pkm/FirmwarePkm/build/bootloader/gdbinit/symbols
+source D:/pkm/FirmwarePkm/build/bootloader/gdbinit/connect

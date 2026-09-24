@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+D:/pkm/FirmwarePkm/build/CMakeFiles/bootloader
+D:/pkm/FirmwarePkm/build/CMakeFiles/bootloader.rule
+D:/pkm/FirmwarePkm/build/CMakeFiles/bootloader-complete.rule
+D:/pkm/FirmwarePkm/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+D:/pkm/FirmwarePkm/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+D:/pkm/FirmwarePkm/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+D:/pkm/FirmwarePkm/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+D:/pkm/FirmwarePkm/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+D:/pkm/FirmwarePkm/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+D:/pkm/FirmwarePkm/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

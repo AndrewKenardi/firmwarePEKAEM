@@ -1,0 +1,47 @@
+Command: cmake -G Ninja -B D:\pkm\FirmwarePkm\build -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\tools\python\v6.0.1\venv\Scripts\python.exe -DESP_PLATFORM=1 -DCCACHE_ENABLE=True D:\pkm\FirmwarePkm
+info: Default value for FREERTOS_HZ in sdkconfig is 1000 but it is 100 according to Kconfig.
+Using default value from sdkconfig (1000).
+Configuration Report                                                           
++-----------------------------------------------------------------------------+
+|  Parser Version: 1                                                          |
+|  Verbosity: default                                                         |
+|  Defaults policy: sdkconfig                                                 |
+|  Status: Finished with notifications                                        |
+|                                                                             |
+| Miscellaneous                                                               |
+| +-------------------------------------------------------------------------+ |
+| | * BT_NIMBLE_MESH_PROVISIONER (defined at                                | |
+| | D:/esp/v6.0.1/esp-idf/components/bt/host/nimble/Kconfig.in:1421):       | |
+| | 'default 0' is not a valid bool value (only 'y' and 'n' are allowed).   | |
+| | Value is treated as 'n'.                                                | |
+| | * BTDM_CTRL_LEGACY_AUTH_VENDOR_EVT_EFF (defined at                      | |
+| | D:/esp/v6.0.1/esp-idf/components/bt/controller/esp32/Kconfig.in:177):   | |
+| | 'default 0' is not a valid bool value (only 'y' and 'n' are allowed).   | |
+| | Value is treated as 'n'.                                                | |
+| | * FATFS_PRINT_LLI (defined at                                           | |
+| | D:/esp/v6.0.1/esp-idf/components/fatfs/Kconfig:230): 'default 0' is not | |
+| | a valid bool value (only 'y' and 'n' are allowed). Value is treated as  | |
+| | 'n'.                                                                    | |
+| | * FATFS_PRINT_FLOAT (defined at                                         | |
+| | D:/esp/v6.0.1/esp-idf/components/fatfs/Kconfig:235): 'default 0' is not | |
+| | a valid bool value (only 'y' and 'n' are allowed). Value is treated as  | |
+| | 'n'.                                                                    | |
+| +-------------------------------------------------------------------------+ |
+| Default Value Mismatch                                                      |
+| +-------------------------------------------------------------------------+ |
+| | Using sdkconfig default values                                       |  | |
+| | Config symbols with different default value between sdkconfig and    |  | |
+| | Kconfig                                                              |  | |
+| | FREERTOS_HZ: Kconfig default value: 100, sdkconfig default value:    |  | |
+| | 1000                                                                 |  | |
+| +-------------------------------------------------------------------------+ |
++-----------------------------------------------------------------------------+
+CMake Deprecation Warning at managed_components/espressif__esp-serial-flasher/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
