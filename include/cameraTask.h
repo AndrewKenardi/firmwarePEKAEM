@@ -19,12 +19,8 @@
 #define IS_CAMERA_FB_OV_BIT (1 << 0)
 #define IS_CAMERA_READING (1 << 0)
 
-// Driver esp32-camera tidak resmi thread-safe untuk esp_camera_fb_get()/
-// esp_camera_fb_return() dipanggil dari lebih dari satu task sekaligus.
-// Karena sekarang ada 2 task yang menangkap frame (vTaskCameraRead untuk
-// robot-command, vTaskMLStream untuk ML server), mutex ini WAJIB dipegang
-// di sekeliling pasangan fb_get()...fb_return() di kedua task tsb.
-// Dibuat di init_camera_driver().
+// Mutex melindungi setiap pemanggilan esp_camera_fb_get()/
+// esp_camera_fb_return() dari task aplikasi yang berbeda.
 extern SemaphoreHandle_t camera_capture_mutex;
 
 esp_err_t init_camera_driver(void);

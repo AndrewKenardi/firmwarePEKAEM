@@ -29,6 +29,30 @@ extern EventGroupHandle_t cameraEventGroup;
 // untuk itu).
 SemaphoreHandle_t camera_capture_mutex = NULL;
 
+static camera_fb_t *camera_safe_fb_get(void)
+{
+    if (camera_capture_mutex == NULL ||
+        xSemaphoreTake(camera_capture_mutex, portMAX_DELAY) != pdTRUE) {
+        return NULL;
+    }
+
+    camera_fb_t *fb = esp_camera_fb_get();
+    xSemaphoreGive(camera_capture_mutex);
+    return fb;
+}
+
+static void camera_safe_fb_return(camera_fb_t *fb)
+{
+    if (fb == NULL || camera_capture_mutex == NULL) {
+        return;
+    }
+
+    if (xSemaphoreTake(camera_capture_mutex, portMAX_DELAY) == pdTRUE) {
+        esp_camera_fb_return(fb);
+        xSemaphoreGive(camera_capture_mutex);
+    }
+}
+
 /**
  * @brief Inisialisasi Driver Kamera
  */
@@ -109,7 +133,7 @@ void vTaskCameraRead(void *pvParameters)
 
         g_cam_iter++;
         g_cam_stage = 1;
-        camera_fb_t *fb = esp_camera_fb_get();
+        camera_fb_t *fb = camera_safe_fb_get();
         g_cam_stage = 2;
 
         if (!fb) {
@@ -123,7 +147,7 @@ void vTaskCameraRead(void *pvParameters)
         g_cam_stage = 3;
         if (xQueueSend(frame_queue, &fb, 0) != pdTRUE) {
             g_cam_q_drop++;
-            esp_camera_fb_return(fb);   // queue penuh, buang frame ini
+            camera_safe_fb_return(fb);
         } else {
             g_cam_q_ok++;
         }

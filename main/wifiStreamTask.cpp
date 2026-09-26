@@ -70,11 +70,6 @@ static const char *TAG_WS = "WS_STREAM";
 // Menaikkan angka ini ke 40-50 ms akan membuat koneksi jauh lebih stabil jika Wi-Fi lambat.
 #define STREAM_FRAME_DELAY_MS 35
 
-// Timeout maksimum menunggu mutex kamera saat akan me-return frame buffer.
-// Diberi batas (bukan portMAX_DELAY) supaya task streaming tidak ikut macet
-// selamanya kalau task lain menahan mutex lebih lama dari yang diharapkan.
-#define CAMERA_MUTEX_WAIT_MS 200
-
 // Ukuran buffer untuk payload mentah yang diteruskan ke slave. HARUS <= 26
 // karena master_uart_send_cmd_with_ack() (uartTx.c) menyusunnya jadi
 // "CMD:<payload>\n" di dalam buffer internal 32 byte miliknya sendiri.
@@ -117,7 +112,12 @@ extern volatile uint32_t g_cam_stage, g_cam_iter, g_cam_fb_ok, g_cam_fb_null, g_
 // esp_camera_fb_return(), supaya tidak bentrok dengan esp_camera_fb_get()
 // yang dipanggil dari vTaskCameraRead (core/task berbeda).
 static inline void ml_safe_fb_return(camera_fb_t *fb) {
-    if (fb) esp_camera_fb_return(fb);
+    if (fb == NULL || camera_capture_mutex == NULL) return;
+
+    if (xSemaphoreTake(camera_capture_mutex, portMAX_DELAY) == pdTRUE) {
+        esp_camera_fb_return(fb);
+        xSemaphoreGive(camera_capture_mutex);
+    }
 }
 
 extern "C" void ml_stream_init(void) {
